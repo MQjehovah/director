@@ -1,25 +1,14 @@
 <script setup lang="ts">
-interface NavItem {
-  key: string
-  label: string
-}
+import { MODULES } from './modules'
+import type { ModuleKey } from './modules'
 
 defineProps<{
   active: string
 }>()
 
 const emit = defineEmits<{
-  (e: 'select', key: string): void
+  (e: 'select', key: ModuleKey): void
 }>()
-
-const items: NavItem[] = [
-  { key: 'characters', label: '角色' },
-  { key: 'script', label: '剧本' },
-  { key: 'storyboard', label: '分镜' },
-  { key: 'film', label: '成片' },
-  { key: 'tasks', label: '任务' },
-  { key: 'pipeline', label: '全流程' },
-]
 </script>
 
 <template>
@@ -28,10 +17,11 @@ const items: NavItem[] = [
     aria-label="模块导航"
   >
     <button
-      v-for="item in items"
+      v-for="item in MODULES"
       :key="item.key"
       type="button"
       class="rounded-md px-3 py-2 text-left text-sm transition-colors"
+      :aria-current="item.key === active ? 'page' : undefined"
       :class="
         item.key === active
           ? 'bg-raised font-medium text-ink'

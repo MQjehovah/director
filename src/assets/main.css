@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  color-scheme: dark;
   --panel: #09090b;
   --raised: #18181b;
   --edge: #27272a;

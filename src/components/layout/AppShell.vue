@@ -4,20 +4,12 @@ import { useEventListener } from '@vueuse/core'
 import TopBar from './TopBar.vue'
 import SideNav from './SideNav.vue'
 import StatusBar from './StatusBar.vue'
-
-const MODULE_LABELS: Record<string, string> = {
-  characters: '角色管理',
-  script: '剧本编辑器',
-  storyboard: '分镜设计',
-  film: '成片合成',
-  tasks: '任务中心',
-  pipeline: '全流程',
-}
+import { moduleTitle } from './modules'
 
 const activeView = ref('characters')
 const contextWidth = ref(280)
 
-const currentLabel = computed(() => MODULE_LABELS[activeView.value] ?? activeView.value)
+const currentLabel = computed(() => moduleTitle(activeView.value))
 
 function startResize(e: PointerEvent) {
   const startX = e.clientX
@@ -46,7 +38,6 @@ function startResize(e: PointerEvent) {
           class="flex shrink-0 items-center justify-between gap-4 border-b border-edge px-6 py-3"
         >
           <h1 class="text-lg font-semibold">{{ currentLabel }}</h1>
-          <span class="text-xs text-ink-muted">模块占位 · 后续任务接入</span>
         </div>
         <div class="flex flex-1 items-center justify-center p-6">
           <p class="max-w-sm text-center text-sm text-ink-muted">
@@ -62,7 +53,7 @@ function startResize(e: PointerEvent) {
         @pointerdown="startResize"
       />
       <aside
-        class="w-72 shrink-0 overflow-y-auto border-l border-edge bg-panel p-4"
+        class="shrink-0 overflow-y-auto border-l border-edge bg-panel p-4"
         :style="{ width: `${contextWidth}px` }"
       >
         <h2
