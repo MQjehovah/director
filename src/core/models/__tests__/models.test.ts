@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CharacterSchema, ShotSchema, JobSchema, BeatSchema } from '../index'
+import { CharacterSchema, ShotSchema, JobSchema, BeatSchema, AssetSchema } from '../index'
 
 describe('domain models', () => {
   it('validates a character', () => {
@@ -19,5 +19,19 @@ describe('domain models', () => {
     const b = BeatSchema.parse({ id: 'b1', type: 'action', action: '小明推门而入' })
     expect(b.action).toBe('小明推门而入')
     expect(b.dialogue).toBeUndefined()
+  })
+  it('requires asset to have url or localPath', () => {
+    expect(() => AssetSchema.parse({ id: 'a1', kind: 'image', source: 'ai' })).toThrow()
+    expect(() => AssetSchema.parse({ id: 'a1', kind: 'image', source: 'ai', url: 'x' })).not.toThrow()
+    expect(() => AssetSchema.parse({ id: 'a1', kind: 'image', source: 'ai', localPath: 'y' })).not.toThrow()
+  })
+  it('allows shot creation without camera config', () => {
+    const s = ShotSchema.parse({ id: 's1', shotType: 'image' })
+    expect(s.camera).toBeUndefined()
+    expect(s.beatRef).toBeUndefined()
+  })
+  it('accepts shot with shotRef linking a job', () => {
+    const j = JobSchema.parse({ id: 'j1', type: 'image2video', shotRef: 's1' })
+    expect(j.shotRef).toBe('s1')
   })
 })

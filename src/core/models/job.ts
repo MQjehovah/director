@@ -14,6 +14,7 @@ export const JobSchema = z.object({
   status: JobStatusSchema.default('queued'),
   progress: z.number().min(0).max(100).default(0),
   pluginId: z.string().optional(),
+  shotRef: z.string().optional(),
   params: z.record(z.unknown()).default({}),
   result: JobResultSchema.optional(),
   createdAt: z.string().default(() => new Date().toISOString()),

@@ -17,9 +17,9 @@ export const CameraSchema = z.object({
 
 export const ShotSchema = z.object({
   id: z.string().min(1),
-  beatRef: z.string().min(1),
+  beatRef: z.string().optional(),
   shotType: ShotTypeSchema,
-  camera: CameraSchema,
+  camera: CameraSchema.optional(),
   prompt: z.string().optional(),
   negativePrompt: z.string().optional(),
   seed: z.number().optional(),
