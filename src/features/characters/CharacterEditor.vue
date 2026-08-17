@@ -79,6 +79,15 @@ function onImagePromptChange(value: string): void {
   })
 }
 
+function removeReferenceImage(id: string): void {
+  if (!character.value) return
+  setField({
+    referenceImages: character.value.referenceImages.filter((r) => r !== id),
+  })
+  uploadMessage.value = '已删除参考图。'
+  void pluginStore.storageProvider?.revokeAssetUrl?.(id)
+}
+
 async function onUploadFiles(e: Event): Promise<void> {
   uploadMessage.value = ''
   const input = e.target as HTMLInputElement
@@ -264,18 +273,30 @@ async function onGeneratePortrait(): Promise<void> {
         <span class="text-xs font-medium text-ink-muted">参考图</span>
         <div class="flex flex-wrap gap-2">
           <template v-for="r in character.referenceImages" :key="r">
-            <img
-              v-if="urlOf(r)"
-              :src="urlOf(r)"
-              class="h-20 w-20 rounded-md border border-edge bg-zinc-800 object-cover"
-              alt="参考图"
-              data-test="ref-image"
-            />
-            <div
-              v-else
-              class="flex h-20 w-20 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
-            >
-              加载中
+            <div class="group relative" data-test="ref-item">
+              <img
+                v-if="urlOf(r)"
+                :src="urlOf(r)"
+                class="h-20 w-20 rounded-md border border-edge bg-zinc-800 object-cover"
+                alt="参考图"
+                data-test="ref-image"
+              />
+              <div
+                v-else
+                class="flex h-20 w-20 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
+              >
+                加载中
+              </div>
+              <button
+                type="button"
+                aria-label="删除参考图"
+                title="删除参考图"
+                data-test="ref-remove"
+                class="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full border border-edge bg-zinc-950 text-xs leading-none text-ink-muted transition-colors hover:border-red-500/60 hover:text-red-400 group-hover:flex"
+                @click="removeReferenceImage(r)"
+              >
+                ✕
+              </button>
             </div>
           </template>
           <label

@@ -252,6 +252,21 @@ describe('character editor', () => {
     expect(w.get('[data-test="upload-message"]').text()).toContain('未配置')
     expect(store.getCharacter(c.id)?.referenceImages).toHaveLength(0)
   })
+
+  it('删除参考图：从角色移除并同步 store', async () => {
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明' })
+    store.updateCharacter(c.id, { referenceImages: ['ref-a', 'ref-b'] })
+    const w = mount(CharacterEditor, { props: { characterId: c.id } })
+
+    const removeBtns = w.findAll('[data-test="ref-remove"]')
+    expect(removeBtns).toHaveLength(2)
+    await removeBtns[0].trigger('click')
+
+    expect(store.getCharacter(c.id)?.referenceImages).toEqual(['ref-b'])
+    expect(w.findAll('[data-test="ref-remove"]')).toHaveLength(1)
+    expect(w.get('[data-test="upload-message"]').text()).toContain('已删除')
+  })
 })
 
 describe('useCharacterFeatures', () => {
