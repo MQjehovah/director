@@ -23,8 +23,10 @@ export const useProjectStore = defineStore('project', () => {
     const storage = getStorage()
     if (!storage) return undefined
     const p = await storage.loadProject(id)
-    if (p) project.value = ProjectSchema.parse(p)
-    return p
+    if (!p) return undefined
+    const parsed = ProjectSchema.parse(p)
+    project.value = parsed
+    return parsed
   }
 
   async function save(): Promise<void> {

@@ -33,9 +33,13 @@ export const useJobStore = defineStore('job', () => {
     replace(id, JobSchema.parse({ ...job, progress: p }))
   }
 
+  function isActive(job: Job | undefined): job is Job {
+    return !!job && (job.status === 'queued' || job.status === 'running')
+  }
+
   function markDone(id: string, result?: JobResult): void {
     const job = getJob(id)
-    if (!job) return
+    if (!isActive(job)) return
     replace(
       id,
       JobSchema.parse({ ...job, status: 'done', progress: 100, ...(result ? { result } : {}) }),
@@ -44,14 +48,14 @@ export const useJobStore = defineStore('job', () => {
 
   function markFailed(id: string, error?: string): void {
     const job = getJob(id)
-    if (!job) return
+    if (!isActive(job)) return
     const result = error ? { data: { error } } : undefined
     replace(id, JobSchema.parse({ ...job, status: 'failed', ...(result ? { result } : {}) }))
   }
 
   function markCanceled(id: string): void {
     const job = getJob(id)
-    if (!job) return
+    if (!isActive(job)) return
     replace(id, JobSchema.parse({ ...job, status: 'canceled' }))
   }
 

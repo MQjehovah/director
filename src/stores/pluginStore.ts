@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { PluginRegistry } from '../core/plugin/registry'
 import type { Plugin, ProviderPlugin, ProviderType } from '../core/plugin/types'
 import type { LLMProvider, MediaProvider, StorageProvider, TTSProvider } from '../providers'
@@ -7,15 +7,22 @@ import type { LLMProvider, MediaProvider, StorageProvider, TTSProvider } from '.
 export const usePluginStore = defineStore('plugin', () => {
   const registry = ref<PluginRegistry | null>(null)
   const activeProviders = ref<Partial<Record<ProviderType, string>>>({})
-  const version = ref(0)
+  const enabledState = reactive<Record<string, boolean>>({})
+  let unsubscribe: (() => void) | undefined
 
   function init(r: PluginRegistry): void {
+    unsubscribe?.()
     registry.value = r
-    version.value += 1
+    for (const p of r.list()) enabledState[p.id] = p.enabled
+    unsubscribe = r.on('plugin:stateChanged', (p) => {
+      enabledState[p.id] = p.enabled
+    })
   }
 
   function enabledProviders(type: ProviderType): ProviderPlugin[] {
-    return registry.value?.resolveEnabledProvider(type) ?? []
+    const r = registry.value
+    if (!r) return []
+    return r.resolveProvider(type).filter((p) => enabledState[p.id])
   }
 
   function setActiveProvider(type: ProviderType, id: string): void {
@@ -23,7 +30,7 @@ export const usePluginStore = defineStore('plugin', () => {
   }
 
   function isEnabled(id: string): boolean {
-    return registry.value?.isEnabled(id) ?? false
+    return enabledState[id] ?? false
   }
 
   function toggle(id: string, enabled?: boolean): void {
@@ -32,14 +39,16 @@ export const usePluginStore = defineStore('plugin', () => {
     const next = enabled ?? !r.isEnabled(id)
     if (next) r.enable(id)
     else r.disable(id)
-    version.value += 1
+    enabledState[id] = next
   }
 
   function resolveInstance<T>(type: ProviderType): T | undefined {
+    const r = registry.value
+    if (!r) return undefined
     const preferredId = activeProviders.value[type]
     if (preferredId) {
-      const preferred = registry.value?.getProvider(preferredId)
-      if (preferred?.enabled && preferred.instance !== undefined) {
+      const preferred = r.getProvider(preferredId)
+      if (preferred && enabledState[preferred.id] && preferred.instance !== undefined) {
         return preferred.instance as T
       }
     }
@@ -47,30 +56,16 @@ export const usePluginStore = defineStore('plugin', () => {
     return first?.instance as T | undefined
   }
 
-  const mediaProvider = computed<MediaProvider | undefined>(() => {
-    void version.value
-    return resolveInstance<MediaProvider>('media')
-  })
-  const llmProvider = computed<LLMProvider | undefined>(() => {
-    void version.value
-    return resolveInstance<LLMProvider>('llm')
-  })
-  const ttsProvider = computed<TTSProvider | undefined>(() => {
-    void version.value
-    return resolveInstance<TTSProvider>('tts')
-  })
-  const storageProvider = computed<StorageProvider | undefined>(() => {
-    void version.value
-    return resolveInstance<StorageProvider>('storage')
-  })
+  const mediaProvider = computed<MediaProvider | undefined>(() => resolveInstance<MediaProvider>('media'))
+  const llmProvider = computed<LLMProvider | undefined>(() => resolveInstance<LLMProvider>('llm'))
+  const ttsProvider = computed<TTSProvider | undefined>(() => resolveInstance<TTSProvider>('tts'))
+  const storageProvider = computed<StorageProvider | undefined>(() =>
+    resolveInstance<StorageProvider>('storage'),
+  )
 
-  const plugins = computed<Plugin[]>(() => {
-    void version.value
-    return registry.value?.list() ?? []
-  })
+  const plugins = computed<Plugin[]>(() => registry.value?.list() ?? [])
 
   return {
-    registry,
     activeProviders,
     init,
     enabledProviders,

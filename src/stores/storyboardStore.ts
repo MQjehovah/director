@@ -52,6 +52,8 @@ export const useStoryboardStore = defineStore('storyboard', () => {
   }
 
   function cutSceneToShots(scene: Scene): Shot[] {
+    const beatIds = new Set(scene.beats.map((b) => b.id))
+    shots.value = shots.value.filter((s) => !(s.beatRef && beatIds.has(s.beatRef)))
     const created: Shot[] = []
     for (const beat of scene.beats) {
       const shot = ShotSchema.parse({

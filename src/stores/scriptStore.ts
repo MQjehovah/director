@@ -16,10 +16,6 @@ export const useScriptStore = defineStore('script', () => {
     script.value = ScriptSchema.parse(next)
   }
 
-  function replace(next: Script): void {
-    script.value = ScriptSchema.parse(next)
-  }
-
   function addScene(data: SceneInput = {}): Scene {
     if (!script.value) {
       script.value = ScriptSchema.parse({ id: newId('script'), title: '未命名剧本' })
@@ -31,7 +27,7 @@ export const useScriptStore = defineStore('script', () => {
 
   function updateScene(id: string, patch: Partial<Omit<Scene, 'id'>>): void {
     if (!script.value) return
-    replace({
+    setScript({
       ...script.value,
       scenes: script.value.scenes.map((s) =>
         s.id === id ? SceneSchema.parse({ ...s, ...patch, id }) : s,
@@ -41,7 +37,7 @@ export const useScriptStore = defineStore('script', () => {
 
   function removeScene(id: string): void {
     if (!script.value) return
-    replace({ ...script.value, scenes: script.value.scenes.filter((s) => s.id !== id) })
+    setScript({ ...script.value, scenes: script.value.scenes.filter((s) => s.id !== id) })
   }
 
   function addBeat(sceneId: string, data: BeatInput): Beat {
@@ -49,7 +45,7 @@ export const useScriptStore = defineStore('script', () => {
     const scene = script.value.scenes.find((s) => s.id === sceneId)
     if (!scene) throw new Error(`scene not found: ${sceneId}`)
     const beat = BeatSchema.parse({ id: newId('beat'), ...data })
-    replace({
+    setScript({
       ...script.value,
       scenes: script.value.scenes.map((s) =>
         s.id === sceneId ? { ...s, beats: [...s.beats, beat] } : s,
@@ -60,7 +56,7 @@ export const useScriptStore = defineStore('script', () => {
 
   function updateBeat(sceneId: string, beatId: string, patch: Partial<Omit<Beat, 'id'>>): void {
     if (!script.value) return
-    replace({
+    setScript({
       ...script.value,
       scenes: script.value.scenes.map((s) =>
         s.id !== sceneId
@@ -77,7 +73,7 @@ export const useScriptStore = defineStore('script', () => {
 
   function removeBeat(sceneId: string, beatId: string): void {
     if (!script.value) return
-    replace({
+    setScript({
       ...script.value,
       scenes: script.value.scenes.map((s) =>
         s.id === sceneId ? { ...s, beats: s.beats.filter((b) => b.id !== beatId) } : s,
