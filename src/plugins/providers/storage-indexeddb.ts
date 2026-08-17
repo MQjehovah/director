@@ -84,6 +84,12 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
     return asset
   }
 
+  async function loadAsset(id: string): Promise<Asset | undefined> {
+    const record = await getDb(databaseName).assets.get(id)
+    if (!record) return undefined
+    return AssetSchema.parse(record)
+  }
+
   const objectUrls = new Map<string, string>()
 
   async function getAssetUrl(asset: Asset): Promise<string | undefined> {
@@ -114,6 +120,7 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
     listProjects,
     deleteProject,
     saveAsset,
+    loadAsset,
     getAssetUrl,
     revokeAssetUrl,
   }

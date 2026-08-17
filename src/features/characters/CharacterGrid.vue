@@ -1,17 +1,24 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import { useCharacterStore } from '../../stores/characterStore'
+import { useAssetUrls } from '../shared/useAssetUrls'
 import { Badge, Button } from '../../components/ui'
 
 const store = useCharacterStore()
+const { resolveAsset, urlOf } = useAssetUrls()
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
   (e: 'add'): void
 }>()
 
-function isImageSrc(value: string): boolean {
-  return value.startsWith('data:') || value.startsWith('http') || value.startsWith('/')
-}
+watch(
+  () => store.characters.map((c) => c.referenceImages[0]),
+  (ids) => {
+    for (const id of ids) if (id) void resolveAsset(id)
+  },
+  { immediate: true, deep: true },
+)
 </script>
 
 <template>
@@ -40,8 +47,8 @@ function isImageSrc(value: string): boolean {
         </p>
         <div v-if="c.referenceImages.length > 0" class="flex gap-1">
           <img
-            v-if="isImageSrc(c.referenceImages[0])"
-            :src="c.referenceImages[0]"
+            v-if="urlOf(c.referenceImages[0])"
+            :src="urlOf(c.referenceImages[0])"
             class="h-10 w-10 rounded border border-edge bg-zinc-800 object-cover"
             alt=""
           />

@@ -20,6 +20,7 @@ export interface StorageProvider {
   listProjects(): Promise<ProjectSummary[]>
   deleteProject(id: string): Promise<void>
   saveAsset(file: Blob | File, meta: AssetMeta): Promise<Asset>
+  loadAsset?(id: string): Promise<Asset | undefined>
   getAssetUrl(asset: Asset): Promise<string | undefined>
   revokeAssetUrl?(assetId: string): Promise<void>
 }

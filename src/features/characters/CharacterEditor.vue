@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useCharacterStore } from '../../stores/characterStore'
+import { usePluginStore } from '../../stores/pluginStore'
 import { useCharacterFeatures } from './useCharacterFeatures'
-import { Button, Input, Textarea } from '../../components/ui'
+import { useAssetUrls } from '../shared/useAssetUrls'
+import { Button, Dialog, Input, Textarea } from '../../components/ui'
 import type { Character } from '../../core/models'
 
 const props = defineProps<{ characterId: string }>()
@@ -12,14 +14,26 @@ const emit = defineEmits<{
 }>()
 
 const store = useCharacterStore()
+const pluginStore = usePluginStore()
 const features = useCharacterFeatures()
+const { resolveAsset, urlOf } = useAssetUrls()
 
 const character = computed(() => store.getCharacter(props.characterId))
 
+const aiOpen = ref(false)
 const seedIdea = ref('')
 const imagePrompt = ref((character.value?.metadata.imagePrompt as string | undefined) ?? '')
 const message = ref('')
+const uploadMessage = ref('')
 const busy = ref(false)
+
+watch(
+  () => character.value?.referenceImages,
+  (ids) => {
+    for (const id of ids ?? []) void resolveAsset(id)
+  },
+  { immediate: true, deep: true },
+)
 
 const tagsText = computed({
   get: () => character.value?.tags.join(', ') ?? '',
@@ -65,8 +79,32 @@ function onImagePromptChange(value: string): void {
   })
 }
 
-function isImageSrc(value: string): boolean {
-  return value.startsWith('data:') || value.startsWith('http') || value.startsWith('/')
+async function onUploadFiles(e: Event): Promise<void> {
+  uploadMessage.value = ''
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (files.length === 0) return
+  if (!character.value) return
+  const storage = pluginStore.storageProvider
+  if (!storage) {
+    uploadMessage.value = '未配置存储 Provider，无法上传参考图。'
+    return
+  }
+  busy.value = true
+  try {
+    const ids: string[] = []
+    for (const file of files) {
+      const asset = await storage.saveAsset(file, { kind: 'image', source: 'upload' })
+      ids.push(asset.id)
+    }
+    setField({ referenceImages: [...character.value.referenceImages, ...ids] })
+    uploadMessage.value = `已上传 ${ids.length} 张参考图。`
+  } catch (err) {
+    uploadMessage.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    busy.value = false
+  }
 }
 
 async function onGenerateDescription(): Promise<void> {
@@ -80,8 +118,12 @@ async function onGenerateDescription(): Promise<void> {
   busy.value = true
   try {
     const res = await features.generateCharacterDescription(idea)
-    if (res.ok) setField({ appearance: res.text })
-    else message.value = res.error
+    if (res.ok) {
+      setField({ appearance: res.text })
+      message.value = '已生成角色设定，可在「外貌描述」中查看与修改。'
+    } else {
+      message.value = res.error
+    }
   } finally {
     busy.value = false
   }
@@ -117,7 +159,7 @@ async function onGeneratePortrait(): Promise<void> {
   busy.value = true
   try {
     const job = await features.generatePortrait(c.id)
-    message.value = job ? `立绘生成任务已创建（${job.id}）。` : '未配置媒体 Provider，无法生成立绘。'
+    message.value = job ? `立绘生成任务已创建（${job.id}），完成后将出现在参考图中。` : '未配置媒体 Provider，无法生成立绘。'
   } catch (err) {
     message.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -133,15 +175,27 @@ async function onGeneratePortrait(): Promise<void> {
   >
     <header class="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
       <h2 class="text-sm font-semibold text-ink">角色详情</h2>
-      <button
-        type="button"
-        aria-label="关闭"
-        data-test="editor-close"
-        class="rounded-md p-1 text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink"
-        @click="emit('close')"
-      >
-        ✕
-      </button>
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          aria-label="AI 辅助"
+          title="AI 辅助"
+          data-test="editor-ai-btn"
+          class="rounded-md px-1.5 py-1 text-sm text-amber-300/90 transition-colors hover:bg-zinc-800 hover:text-amber-300"
+          @click="aiOpen = true"
+        >
+          ✨
+        </button>
+        <button
+          type="button"
+          aria-label="关闭"
+          data-test="editor-close"
+          class="rounded-md p-1 text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink"
+          @click="emit('close')"
+        >
+          ✕
+        </button>
+      </div>
     </header>
 
     <div class="flex flex-col gap-4 p-4">
@@ -207,73 +261,106 @@ async function onGeneratePortrait(): Promise<void> {
       </label>
 
       <div class="flex flex-col gap-2">
-        <span class="text-xs font-medium text-ink-muted">参考图</span>
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-medium text-ink-muted">参考图</span>
+          <label
+            class="cursor-pointer select-none rounded-md px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink"
+            :class="{ 'pointer-events-none opacity-50': busy }"
+            data-test="ref-upload-btn"
+          >
+            上传
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              class="hidden"
+              data-test="ref-upload-input"
+              @change="onUploadFiles"
+            />
+          </label>
+        </div>
         <div v-if="character.referenceImages.length > 0" class="flex flex-wrap gap-2">
           <template v-for="r in character.referenceImages" :key="r">
             <img
-              v-if="isImageSrc(r)"
-              :src="r"
+              v-if="urlOf(r)"
+              :src="urlOf(r)"
               class="h-20 w-20 rounded-md border border-edge bg-zinc-800 object-cover"
               alt="参考图"
+              data-test="ref-image"
             />
             <div
               v-else
               class="flex h-20 w-20 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
             >
-              图 {{ r }}
+              加载中
             </div>
           </template>
         </div>
-        <p v-else class="text-xs text-ink-muted">暂无参考图，可通过「生成立绘」生成。</p>
+        <p v-else class="text-xs text-ink-muted">暂无参考图，可上传本地图片或通过「AI 辅助」生成。</p>
+        <p v-if="uploadMessage" class="text-xs text-amber-300" data-test="upload-message">
+          {{ uploadMessage }}
+        </p>
       </div>
+    </div>
 
-      <div class="flex flex-col gap-2 rounded-md border border-edge bg-raised p-3">
-        <span class="text-xs font-semibold text-ink">AI 辅助</span>
+    <Dialog
+      :open="aiOpen"
+      title="AI 辅助"
+      @update:open="aiOpen = $event"
+    >
+      <div class="flex flex-col gap-5">
+        <section class="flex flex-col gap-2">
+          <h3 class="text-xs font-semibold text-ink">AI 生成角色信息</h3>
+          <div class="flex gap-2">
+            <Input v-model="seedIdea" placeholder="灵感关键词，例如：银发剑士" data-test="seed-idea" />
+            <Button
+              variant="primary"
+              size="sm"
+              class="shrink-0"
+              data-test="ai-describe"
+              :disabled="busy"
+              @click="onGenerateDescription"
+            >
+              生成设定
+            </Button>
+          </div>
+          <p class="text-xs text-ink-muted">生成结果会填入「外貌描述」，可随时手动修改。</p>
+        </section>
 
-        <div class="flex gap-2">
-          <Input v-model="seedIdea" placeholder="灵感关键词" data-test="seed-idea" />
-          <Button
-            variant="primary"
-            size="sm"
-            class="shrink-0"
-            data-test="ai-describe"
-            :disabled="busy"
-            @click="onGenerateDescription"
-          >
-            生成设定
-          </Button>
-        </div>
-
-        <Textarea
-          :model-value="imagePrompt"
-          :rows="3"
-          placeholder="参考图提示词（可编辑）"
-          data-test="image-prompt"
-          @update:model-value="onImagePromptChange"
-        />
-        <div class="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            data-test="ai-expand"
-            :disabled="busy"
-            @click="onExpandPrompt"
-          >
-            AI 扩写
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            data-test="gen-portrait"
-            :disabled="busy"
-            @click="onGeneratePortrait"
-          >
-            生成立绘
-          </Button>
-        </div>
+        <section class="flex flex-col gap-2">
+          <h3 class="text-xs font-semibold text-ink">AI 生成角色参考图</h3>
+          <Textarea
+            :model-value="imagePrompt"
+            :rows="4"
+            placeholder="参考图提示词（可先 AI 扩写再手动调整）"
+            data-test="image-prompt"
+            @update:model-value="onImagePromptChange"
+          />
+          <div class="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              data-test="ai-expand"
+              :disabled="busy"
+              @click="onExpandPrompt"
+            >
+              AI 扩写提示词
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              data-test="gen-portrait"
+              :disabled="busy"
+              @click="onGeneratePortrait"
+            >
+              生成立绘
+            </Button>
+          </div>
+          <p class="text-xs text-ink-muted">生成的立绘完成后会自动加入参考图。</p>
+        </section>
 
         <p v-if="message" class="text-xs text-amber-300" data-test="message">{{ message }}</p>
       </div>
-    </div>
+    </Dialog>
   </aside>
 </template>

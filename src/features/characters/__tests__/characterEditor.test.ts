@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper } from '@vue/test-utils'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import CharacterGrid from '../CharacterGrid.vue'
@@ -11,11 +12,63 @@ import { useCharacterFeatures } from '../useCharacterFeatures'
 import { PluginRegistry } from '../../../core'
 import { createLLMMockPlugin, createMediaMockPlugin } from '../../../plugins/providers'
 
-function initProviders(types: Array<'llm' | 'media'>): void {
+function initProviders(types: Array<'llm' | 'media' | 'storage'>): void {
   const registry = new PluginRegistry()
   if (types.includes('llm')) registry.register(createLLMMockPlugin())
   if (types.includes('media')) registry.register(createMediaMockPlugin({ delayMs: 10 }))
+  if (types.includes('storage')) {
+    registry.register({
+      id: 'storage-stub',
+      name: 'Storage Stub',
+      kind: 'provider',
+      providerType: 'storage',
+      enabled: true,
+      instance: createStorageStub(),
+    })
+  }
   usePluginStore().init(registry)
+}
+
+/** 内存版存储 Provider 桩：saveAsset/loadAsset/getAssetUrl 闭环，避免依赖真实 indexedDB */
+function createStorageStub() {
+  const assets = new Map<string, { id: string; url: string }>()
+  let seq = 0
+  return {
+    id: 'storage-stub',
+    name: 'Storage Stub',
+    async loadProject() {
+      return undefined
+    },
+    async saveProject() {},
+    async listProjects() {
+      return []
+    },
+    async deleteProject() {},
+    async saveAsset(_file: Blob | File, meta: { kind: string }) {
+      seq += 1
+      const id = `stub-asset-${seq}`
+      const record = { id, url: `blob:stub/${id}` }
+      assets.set(id, record)
+      return { id, kind: meta.kind, source: 'upload' as const, metadata: {} }
+    },
+    async loadAsset(id: string) {
+      return assets.has(id) ? { id, kind: 'image' as const, source: 'upload' as const, metadata: {} } : undefined
+    },
+    async getAssetUrl(asset: { id: string }) {
+      return assets.get(asset.id)?.url
+    },
+  }
+}
+
+/** Dialog 通过 Teleport 渲染到 body，需要打开弹窗后从 body 查询内部元素 */
+async function openAiDialog(w: ReturnType<typeof mount>): Promise<void> {
+  await w.get('[data-test="editor-ai-btn"]').trigger('click')
+}
+
+function inDialog(selector: string): DOMWrapper<Element> {
+  const el = document.body.querySelector(selector)
+  if (!el) throw new Error(`dialog element not found: ${selector}`)
+  return new DOMWrapper(el)
 }
 
 describe('character grid', () => {
@@ -65,6 +118,7 @@ describe('character panel', () => {
 describe('character editor', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    document.body.innerHTML = ''
   })
 
   it('updates name, appearance and tags', async () => {
@@ -94,8 +148,9 @@ describe('character editor', () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await w.get('[data-test="seed-idea"]').setValue('银发剑士')
-    await w.get('[data-test="ai-describe"]').trigger('click')
+    await openAiDialog(w)
+    await inDialog('[data-test="seed-idea"]').setValue('银发剑士')
+    await inDialog('[data-test="ai-describe"]').trigger('click')
     await flushPromises()
     expect(store.getCharacter(c.id)?.appearance).toContain('银发剑士')
   })
@@ -104,10 +159,11 @@ describe('character editor', () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await w.get('[data-test="seed-idea"]').setValue('银发剑士')
-    await w.get('[data-test="ai-describe"]').trigger('click')
+    await openAiDialog(w)
+    await inDialog('[data-test="seed-idea"]').setValue('银发剑士')
+    await inDialog('[data-test="ai-describe"]').trigger('click')
     await flushPromises()
-    expect(w.get('[data-test="message"]').text()).toContain('未配置')
+    expect(inDialog('[data-test="message"]').text()).toContain('未配置')
   })
 
   it('AI 扩写 stores an editable image prompt', async () => {
@@ -115,9 +171,10 @@ describe('character editor', () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明', appearance: '黑发少年' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await w.get('[data-test="ai-expand"]').trigger('click')
+    await openAiDialog(w)
+    await inDialog('[data-test="ai-expand"]').trigger('click')
     await flushPromises()
-    expect(w.get<HTMLTextAreaElement>('[data-test="image-prompt"]').element.value).toContain(
+    expect((inDialog('[data-test="image-prompt"]').element as HTMLTextAreaElement).value).toContain(
       'Mock 回复',
     )
     expect(store.getCharacter(c.id)?.metadata.imagePrompt).toContain('Mock 回复')
@@ -129,7 +186,8 @@ describe('character editor', () => {
     const c = store.addCharacter({ name: '小明', appearance: '黑发少年' })
     const jobs = useJobStore()
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await w.get('[data-test="gen-portrait"]').trigger('click')
+    await openAiDialog(w)
+    await inDialog('[data-test="gen-portrait"]').trigger('click')
     await flushPromises()
     expect(jobs.jobs).toHaveLength(1)
     expect(jobs.jobs[0].type).toBe('text2image')
@@ -142,9 +200,57 @@ describe('character editor', () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await w.get('[data-test="gen-portrait"]').trigger('click')
+    await openAiDialog(w)
+    await inDialog('[data-test="gen-portrait"]').trigger('click')
     await flushPromises()
-    expect(w.get('[data-test="message"]').text()).toContain('未配置')
+    expect(inDialog('[data-test="message"]').text()).toContain('未配置')
+  })
+
+  it('AI 辅助弹窗默认关闭，点击按钮打开', async () => {
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明' })
+    const w = mount(CharacterEditor, { props: { characterId: c.id } })
+    expect(document.body.querySelector('[data-test="seed-idea"]')).toBeNull()
+    await openAiDialog(w)
+    expect(document.body.querySelector('[data-test="seed-idea"]')).not.toBeNull()
+    expect(inDialog('[data-test="ai-describe"]')).toBeTruthy()
+  })
+
+  it('上传参考图：保存到存储 Provider 并显示图片', async () => {
+    initProviders(['storage'])
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明' })
+    const w = mount(CharacterEditor, { props: { characterId: c.id } })
+
+    const input = w.get<HTMLInputElement>('[data-test="ref-upload-input"]')
+    const file = new File(['fake-image'], 'cat.png', { type: 'image/png' })
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+
+    const refs = store.getCharacter(c.id)?.referenceImages ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatch(/^stub-asset-/)
+    expect(w.get('[data-test="upload-message"]').text()).toContain('已上传 1 张')
+    await flushPromises()
+    const imgs = w.findAll('[data-test="ref-image"]')
+    expect(imgs).toHaveLength(1)
+    expect(imgs[0].attributes('src')).toBe(`blob:stub/${refs[0]}`)
+  })
+
+  it('未配置存储 Provider 时上传给出提示', async () => {
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明' })
+    const w = mount(CharacterEditor, { props: { characterId: c.id } })
+
+    const input = w.get<HTMLInputElement>('[data-test="ref-upload-input"]')
+    const file = new File(['fake-image'], 'cat.png', { type: 'image/png' })
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(w.get('[data-test="upload-message"]').text()).toContain('未配置')
+    expect(store.getCharacter(c.id)?.referenceImages).toHaveLength(0)
   })
 })
 
