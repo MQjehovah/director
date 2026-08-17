@@ -9,6 +9,14 @@ export {
 } from './media-comfyui'
 export type { MediaComfyUIOptions, MediaComfyUIProvider } from './media-comfyui'
 
+export {
+  createMediaDashScopeProvider,
+  createMediaDashScopePlugin,
+  MEDIA_DASHSCOPE_ID,
+  DEFAULT_DASHSCOPE_TEXT2IMAGE_URL,
+} from './media-dashscope'
+export type { MediaDashScopeOptions, MediaDashScopeProvider } from './media-dashscope'
+
 export { createLLMMockProvider, createLLMMockPlugin } from './llm-mock'
 export type { LLMMockOptions, LLMMockProvider } from './llm-mock'
 
