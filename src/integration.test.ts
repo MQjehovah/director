@@ -78,13 +78,13 @@ describe('app shell wiring', () => {
       ['分镜', 'view-grid'],
       ['成片', 'player-panel'],
       ['任务', 'jobs-drawer'],
-      ['全流程', 'run-all'],
+      ['画布', 'run-all'],
       ['设置', 'enabled-summary'],
       ['AI助手', 'agent-panel'],
     ]
     const buttons = w.findAll('nav button')
     const labels = buttons.map((b) => b.text())
-    expect(labels).toEqual(['角色', '剧本', '分镜', '成片', '任务', '全流程', '设置', 'AI助手'])
+    expect(labels).toEqual(['角色', '剧本', '分镜', '成片', '任务', '画布', '设置', 'AI助手'])
 
     for (const [label, testId] of assertions) {
       await buttons[labels.indexOf(label)].trigger('click')

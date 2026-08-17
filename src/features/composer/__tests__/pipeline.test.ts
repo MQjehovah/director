@@ -321,11 +321,30 @@ describe('composer panel', () => {
     setActivePinia(createPinia())
   })
 
-  it('renders the idea input, preset steps and an execute button', () => {
+  it('renders the idea input, pipeline nodes and an execute button', async () => {
     const w = mount(ComposerPanel)
+    await flushPromises()
     expect(w.get('[data-test="idea-input"]')).toBeTruthy()
-    expect(w.findAll('[data-test="step-row"]').length).toBeGreaterThan(0)
+    expect(w.findAll('[data-test="pipeline-node"]').length).toBeGreaterThan(0)
     expect(w.get('[data-test="run-all"]')).toBeTruthy()
+  })
+
+  it('adds a node from the palette', async () => {
+    const w = mount(ComposerPanel)
+    await flushPromises()
+    const before = w.findAll('[data-test="pipeline-node"]').length
+    await w.get('[data-test="add-node-render"]').trigger('click')
+    await flushPromises()
+    expect(w.findAll('[data-test="pipeline-node"]').length).toBe(before + 1)
+  })
+
+  it('removes a node and its connections', async () => {
+    const w = mount(ComposerPanel)
+    await flushPromises()
+    const before = w.findAll('[data-test="pipeline-node"]').length
+    await w.findAll('[data-test="node-remove"]')[0].trigger('click')
+    await flushPromises()
+    expect(w.findAll('[data-test="pipeline-node"]').length).toBe(before - 1)
   })
 
   it('runs the full pipeline with mocks producing script, shots and jobs', async () => {
