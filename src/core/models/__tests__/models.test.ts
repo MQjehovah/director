@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { CharacterSchema, ShotSchema, JobSchema, BeatSchema, AssetSchema } from '../index'
+import {
+  CharacterSchema,
+  SceneSchema,
+  ShotSchema,
+  JobSchema,
+  BeatSchema,
+  AssetSchema,
+} from '../index'
 
 describe('domain models', () => {
   it('validates a character', () => {
@@ -19,6 +26,19 @@ describe('domain models', () => {
     const b = BeatSchema.parse({ id: 'b1', type: 'action', action: '小明推门而入' })
     expect(b.action).toBe('小明推门而入')
     expect(b.dialogue).toBeUndefined()
+  })
+  it('accepts a scene with scene image and reference images', () => {
+    const s = SceneSchema.parse({
+      id: 'sc1',
+      title: '屋顶',
+      artMode: 'img2img',
+      sceneImage: 'asset-1',
+      referenceImages: ['asset-ref'],
+    })
+    expect(s.artMode).toBe('img2img')
+    expect(s.sceneImage).toBe('asset-1')
+    expect(s.referenceImages).toEqual(['asset-ref'])
+    expect(s.metadata).toEqual({})
   })
   it('requires asset to have url or localPath', () => {
     expect(() => AssetSchema.parse({ id: 'a1', kind: 'image', source: 'ai' })).toThrow()

@@ -61,7 +61,7 @@ function onUse(id: string): void {
   <section class="rounded-lg border border-edge bg-zinc-900/40 p-4" data-test="workflow-template-manager">
     <h3 class="text-sm font-semibold text-ink">ComfyUI 工作流模板</h3>
     <p class="mt-1 text-xs leading-relaxed text-ink-muted">
-      粘贴 ComfyUI API 格式工作流 JSON，自动识别正向提示词 / 负向提示词 / seed 节点；保存后在「工作流模板」下拉中选择使用。
+      粘贴 ComfyUI API 格式工作流 JSON，自动识别正向提示词 / 负向提示词 / seed 节点；保存后在「文生图工作流模板」下拉中选择使用。
     </p>
 
     <div class="mt-3 grid grid-cols-1 gap-3">

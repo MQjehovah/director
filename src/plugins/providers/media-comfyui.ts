@@ -7,6 +7,7 @@ import type {
   TextToImageParams,
   TextToVideoParams,
 } from '../../providers/MediaProvider'
+import type { ImageEditParams } from '../../providers/capabilities/image-edit'
 import { createJobController } from '../../providers/capabilities'
 import { loadProviderConfig } from '../../features/settings/httpBackendConfig'
 import { getWorkflowTemplate } from '../../features/comfyui/workflowStore'
@@ -67,6 +68,7 @@ export const DEFAULT_TXT2IMG_WORKFLOW = JSON.stringify({
 export interface MediaComfyUIProvider extends MediaProvider {
   waitForJob(id: string, timeoutMs?: number): Promise<Job>
   getAsset(assetId: string): Promise<Asset | undefined>
+  resumeJob(job: Job): Promise<Job>
 }
 
 interface ComfyHistory {
@@ -82,7 +84,13 @@ interface ComfyHistory {
   }
 }
 
-function readConfig(): { baseUrl: string; workflowTemplateId?: string; videoWorkflowTemplateId?: string } {
+function readConfig(): {
+  baseUrl: string
+  workflowTemplateId?: string
+  videoWorkflowTemplateId?: string
+  img2imgWorkflowTemplateId?: string
+  continuationVideoWorkflowTemplateId?: string
+} {
   const config = loadProviderConfig(MEDIA_COMFYUI_ID) ?? {}
   const baseUrl = String(config.baseUrl ?? '').replace(/\/+$/, '')
   if (!baseUrl) {
@@ -97,7 +105,171 @@ function readConfig(): { baseUrl: string; workflowTemplateId?: string; videoWork
     config.videoWorkflowTemplateId.trim() !== ''
       ? config.videoWorkflowTemplateId.trim()
       : undefined
-  return { baseUrl, workflowTemplateId, videoWorkflowTemplateId }
+  const img2imgWorkflowTemplateId =
+    typeof config.img2imgWorkflowTemplateId === 'string' &&
+    config.img2imgWorkflowTemplateId.trim() !== ''
+      ? config.img2imgWorkflowTemplateId.trim()
+      : undefined
+  const continuationVideoWorkflowTemplateId =
+    typeof config.continuationVideoWorkflowTemplateId === 'string' &&
+    config.continuationVideoWorkflowTemplateId.trim() !== ''
+      ? config.continuationVideoWorkflowTemplateId.trim()
+      : undefined
+  return {
+    baseUrl,
+    workflowTemplateId,
+    videoWorkflowTemplateId,
+    img2imgWorkflowTemplateId,
+    continuationVideoWorkflowTemplateId,
+  }
+}
+
+interface ComfyVideoRef {
+  filename: string
+  subfolder?: string
+  type?: string
+}
+
+/** 从 ComfyUI /view 资产 URL 解析服务器侧文件名，供 LoadVideo/{prev_video} 注入 */
+function parseComfyViewUrl(url: string): ComfyVideoRef | undefined {
+  try {
+    const u = new URL(url)
+    if (!u.pathname.endsWith('/view')) return undefined
+    const filename = u.searchParams.get('filename')
+    if (!filename) return undefined
+    return {
+      filename,
+      subfolder: u.searchParams.get('subfolder') ?? undefined,
+      type: u.searchParams.get('type') ?? undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+type WorkflowGraph = Record<string, { class_type: string; inputs: Record<string, unknown> }>
+
+function uniqueNodeId(graph: WorkflowGraph, base: string): string {
+  let id = base
+  let i = 1
+  while (id in graph) {
+    i += 1
+    id = `${base}_${i}`
+  }
+  return id
+}
+
+/** 把引用占位符替换为节点引用；ref 为空时删除该输入，避免悬空引用 */
+function replaceInputRef(
+  graph: WorkflowGraph,
+  placeholder: string,
+  ref: [string, number] | undefined,
+): void {
+  for (const node of Object.values(graph)) {
+    for (const key of Object.keys(node.inputs)) {
+      if (node.inputs[key] === placeholder) {
+        if (ref) node.inputs[key] = ref
+        else delete node.inputs[key]
+      }
+    }
+  }
+}
+
+/**
+ * 动态注入工作流输入：
+ * - 值占位符 {image}/{prev_video}/{duration}：替换为文件名/时长；
+ * - 节点引用占位符 {image_link}/{prev_video_link}：有输入时动态插入
+ *   LoadImage/VHS_LoadVideo 节点并接线，无输入时删除对应输入，避免空节点报错。
+ */
+function applyDynamicInputs(
+  graph: WorkflowGraph,
+  opts: {
+    inputImage?: { name: string; subfolder?: string; type?: string }
+    prevVideo?: ComfyVideoRef
+    duration?: number
+  },
+): void {
+  if (opts.inputImage) {
+    let replaced = false
+    for (const node of Object.values(graph)) {
+      for (const key of Object.keys(node.inputs)) {
+        if (node.inputs[key] === '{image}') {
+          node.inputs[key] = opts.inputImage.name
+          replaced = true
+        }
+      }
+    }
+    if (!replaced) {
+      const loadImageId = Object.keys(graph).find((id) => graph[id].class_type === 'LoadImage')
+      if (loadImageId && graph[loadImageId].inputs) {
+        graph[loadImageId].inputs.image = opts.inputImage.name
+        if (opts.inputImage.subfolder) graph[loadImageId].inputs.subfolder = opts.inputImage.subfolder
+        if (opts.inputImage.type) graph[loadImageId].inputs.type = opts.inputImage.type
+      }
+    }
+  }
+  if (opts.prevVideo) {
+    let replaced = false
+    for (const node of Object.values(graph)) {
+      for (const key of Object.keys(node.inputs)) {
+        if (node.inputs[key] === '{prev_video}') {
+          node.inputs[key] = opts.prevVideo.filename
+          replaced = true
+        }
+      }
+    }
+    if (!replaced) {
+      const loadVideoId = Object.keys(graph).find((id) =>
+        graph[id].class_type.toLowerCase().includes('loadvideo'),
+      )
+      if (loadVideoId && graph[loadVideoId].inputs) {
+        graph[loadVideoId].inputs.video = opts.prevVideo.filename
+        if (opts.prevVideo.subfolder) graph[loadVideoId].inputs.subfolder = opts.prevVideo.subfolder
+        if (opts.prevVideo.type) graph[loadVideoId].inputs.type = opts.prevVideo.type
+      }
+    }
+  }
+  if (opts.duration !== undefined) {
+    for (const node of Object.values(graph)) {
+      for (const key of Object.keys(node.inputs)) {
+        if (node.inputs[key] === '{duration}') {
+          node.inputs[key] = opts.duration
+        }
+      }
+    }
+  }
+
+  if (opts.inputImage) {
+    const id = uniqueNodeId(graph, 'ai-director-image')
+    graph[id] = { class_type: 'LoadImage', inputs: { image: opts.inputImage.name } }
+    if (opts.inputImage.subfolder) graph[id].inputs.subfolder = opts.inputImage.subfolder
+    if (opts.inputImage.type) graph[id].inputs.type = opts.inputImage.type
+    replaceInputRef(graph, '{image_link}', [id, 0])
+  } else {
+    replaceInputRef(graph, '{image_link}', undefined)
+  }
+
+  if (opts.prevVideo) {
+    const id = uniqueNodeId(graph, 'ai-director-video')
+    graph[id] = {
+      class_type: 'VHS_LoadVideo',
+      inputs: {
+        video: opts.prevVideo.filename,
+        force_rate: 0,
+        force_size: 'Disabled',
+        frame_load_cap: 0,
+        skip_first_frames: 0,
+        select_every_nth: 1,
+        single_image_load: false,
+        simple_schedule: false,
+      },
+    }
+    if (opts.prevVideo.subfolder) graph[id].inputs.subfolder = opts.prevVideo.subfolder
+    if (opts.prevVideo.type) graph[id].inputs.type = opts.prevVideo.type
+    replaceInputRef(graph, '{prev_video_link}', [id, 0])
+  } else {
+    replaceInputRef(graph, '{prev_video_link}', undefined)
+  }
 }
 
 /** 由 HTTP baseUrl 推导 WebSocket 地址：http→ws、https→wss，路径固定为 /ws */
@@ -229,6 +401,17 @@ function mimeFor(filename: string): string {
     default:
       return 'image/png'
   }
+}
+
+function mimeToExt(mime: string): string | undefined {
+  const table: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'video/mp4': 'mp4',
+  }
+  return table[mime]
 }
 
 export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): MediaComfyUIProvider {
@@ -455,7 +638,9 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     prompt: string,
     negativePrompt: string | undefined,
     seed: number,
-    inputImageUrl?: string,
+    inputImage?: { name: string; subfolder?: string; type?: string },
+    prevVideo?: ComfyVideoRef,
+    duration?: number,
   ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
     if (templateId) {
       const template = getWorkflowTemplate(templateId)
@@ -471,33 +656,91 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
         negativeNodeId: template.negativeNodeId,
         seedNodeId: template.seedNodeId,
       })
-      if (inputImageUrl) {
-        // 把 {image} 占位符替换为输入图 URL；无占位符则尝试写 LoadImage 节点
-        let replaced = false
-        for (const node of Object.values(injected)) {
-          for (const key of Object.keys(node.inputs)) {
-            if (node.inputs[key] === '{image}') {
-              node.inputs[key] = inputImageUrl
-              replaced = true
-            }
-          }
-        }
-        if (!replaced) {
-          const loadImageId = Object.keys(injected).find(
-            (id) => injected[id].class_type === 'LoadImage',
-          )
-          if (loadImageId && injected[loadImageId].inputs) {
-            injected[loadImageId].inputs.image = inputImageUrl
-          }
-        }
-      }
+      applyDynamicInputs(injected, { inputImage, prevVideo, duration })
       return injected
     }
     // 无模板：图片用内置文生图模板；视频明确报错
-    if (inputImageUrl) {
+    if (inputImage) {
       throw new Error('图生视频需要在 ComfyUI 工作流模板中配置 {image} 占位符或 LoadImage 节点。')
     }
     return injectPlaceholders(DEFAULT_TXT2IMG_WORKFLOW, prompt, negativePrompt, seed)
+  }
+
+  /** 解析图生图工作流模板：注入提示词/seed，并把上传后的参考图写入 LoadImage/{image} 节点 */
+  function buildImg2ImgGraph(
+    templateId: string | undefined,
+    prompt: string,
+    negativePrompt: string | undefined,
+    seed: number,
+    uploaded: { name: string; subfolder?: string; type?: string },
+  ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
+    if (!templateId) {
+      throw new Error(
+        '未配置图生图工作流模板：请在「设置 → ComfyUI 媒体」的图生图工作流模板中导入并选择。',
+      )
+    }
+    const template = getWorkflowTemplate(templateId)
+    if (!template) {
+      throw new Error('ComfyUI 图生图工作流模板不存在，请在「设置」中重新导入模板。')
+    }
+    const graph = JSON.parse(template.graphJson) as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    const injected = injectIntoNodes(graph, prompt, negativePrompt, seed, {
+      promptNodeId: template.promptNodeId,
+      negativeNodeId: template.negativeNodeId,
+      seedNodeId: template.seedNodeId,
+    })
+    let replaced = false
+    for (const node of Object.values(injected)) {
+      for (const key of Object.keys(node.inputs)) {
+        if (node.inputs[key] === '{image}') {
+          node.inputs[key] = uploaded.name
+          replaced = true
+        }
+      }
+    }
+    if (!replaced) {
+      const loadImageId = Object.keys(injected).find(
+        (id) => injected[id].class_type === 'LoadImage',
+      )
+      if (loadImageId && injected[loadImageId].inputs) {
+        injected[loadImageId].inputs.image = uploaded.name
+        if (uploaded.subfolder) injected[loadImageId].inputs.subfolder = uploaded.subfolder
+        if (uploaded.type) injected[loadImageId].inputs.type = uploaded.type
+      } else {
+        throw new Error('图生图工作流缺少 {image} 占位符或 LoadImage 节点，无法注入参考图。')
+      }
+    }
+    return injected
+  }
+
+  /** 把参考图上传到 ComfyUI /upload/image，返回服务器侧文件名，供 LoadImage 使用 */
+  async function uploadInputImage(inputUrl: string): Promise<{
+    name: string
+    subfolder?: string
+    type?: string
+  }> {
+    const { baseUrl } = readConfig()
+    const res = await fetch(inputUrl)
+    if (!res.ok) throw new Error(`获取参考图失败（${res.status}）`)
+    const blob = await res.blob()
+    const ext = mimeToExt(blob.type) ?? 'png'
+    const form = new FormData()
+    form.append('image', blob, `ai-director-ref.${ext}`)
+    form.append('overwrite', 'true')
+    const uploadRes = await fetch(`${baseUrl}/upload/image`, {
+      method: 'POST',
+      body: form,
+    })
+    if (!uploadRes.ok) {
+      const text = await uploadRes.text().catch(() => '')
+      throw new Error(`ComfyUI 上传参考图失败（${uploadRes.status}）：${text.slice(0, 200)}`)
+    }
+    const data = (await uploadRes.json()) as { name?: string; subfolder?: string; type?: string }
+    if (!data.name) throw new Error('ComfyUI 上传参考图未返回文件名')
+    return { name: data.name, subfolder: data.subfolder, type: data.type }
   }
 
   async function generateImage(params: TextToImageParams): Promise<Job> {
@@ -508,40 +751,108 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     return submitWorkflow(graph, 'text2image', params.shotRef, seed)
   }
 
+  /** 图生图（参考生图）：上传参考图后提交 img2img 工作流 */
+  async function editImage(params: ImageEditParams): Promise<Job> {
+    const { baseUrl, img2imgWorkflowTemplateId } = readConfig()
+    // 先校验模板再上传，避免参考图白传
+    if (!img2imgWorkflowTemplateId) {
+      throw new Error(
+        '未配置图生图工作流模板：请在「设置 → ComfyUI 媒体」的图生图工作流模板中导入并选择。',
+      )
+    }
+    if (!getWorkflowTemplate(img2imgWorkflowTemplateId)) {
+      throw new Error('ComfyUI 图生图工作流模板不存在，请在「设置」中重新导入模板。')
+    }
+    ensureWs(baseUrl)
+    const inputUrl = await resolveAssetUrl(params.imageAssetId)
+    if (!inputUrl) {
+      throw new Error('无法解析参考图，请先上传或生成参考图。')
+    }
+    const uploaded = await uploadInputImage(inputUrl)
+    const seed = params.seed ?? Math.floor(Math.random() * 1e9)
+    const graph = buildImg2ImgGraph(
+      img2imgWorkflowTemplateId,
+      params.prompt,
+      undefined,
+      seed,
+      uploaded,
+    )
+    return submitWorkflow(graph, 'editImage', params.shotRef, seed)
+  }
+
   async function generateVideo(params: ImageToVideoParams | TextToVideoParams): Promise<Job> {
-    const { baseUrl, videoWorkflowTemplateId } = readConfig()
+    const { baseUrl, videoWorkflowTemplateId, continuationVideoWorkflowTemplateId } = readConfig()
     ensureWs(baseUrl)
     const seed = Math.floor(Math.random() * 1e9)
     const imageAssetId = 'imageAssetId' in params ? params.imageAssetId : undefined
+    const prevVideoAssetId = params.prevVideoAssetId
+    const duration = params.duration
+    // 上一段视频存在且能解析出 ComfyUI 服务器文件名时，走续写工作流模板
+    let prevVideo: ComfyVideoRef | undefined
+    if (prevVideoAssetId) {
+      const prevUrl = await resolveAssetUrl(prevVideoAssetId)
+      prevVideo = prevUrl ? parseComfyViewUrl(prevUrl) : undefined
+    }
+    const templateId = prevVideo
+      ? (continuationVideoWorkflowTemplateId ?? videoWorkflowTemplateId)
+      : videoWorkflowTemplateId
+    const jobType = prevVideo ? 'videoContinue' : imageAssetId ? 'image2video' : 'text2video'
     if (imageAssetId) {
       const inputUrl = await resolveAssetUrl(imageAssetId)
       if (!inputUrl) {
         throw new Error('无法解析输入图，请先生成或上传该镜头的首帧图。')
       }
+      // 首帧图上传到 ComfyUI，把服务器文件名注入 LoadImage/{image}
+      const uploaded = await uploadInputImage(inputUrl)
       const graph = buildGraph(
-        videoWorkflowTemplateId,
+        templateId,
         params.prompt ?? '',
         undefined,
         seed,
-        inputUrl,
+        uploaded,
+        prevVideo,
+        duration,
       )
-      return submitWorkflow(graph, 'image2video', params.shotRef, seed)
+      return submitWorkflow(graph, jobType, params.shotRef, seed)
     }
-    if (!videoWorkflowTemplateId) {
+    if (!templateId) {
       throw new Error(
         '未配置视频工作流模板：请在「设置 → ComfyUI 媒体」的视频工作流模板中导入并选择文生视频/图生视频工作流。',
       )
     }
-    const graph = buildGraph(videoWorkflowTemplateId, params.prompt ?? '', undefined, seed)
-    return submitWorkflow(graph, 'text2video', params.shotRef, seed)
+    const graph = buildGraph(
+      templateId,
+      params.prompt ?? '',
+      undefined,
+      seed,
+      undefined,
+      prevVideo,
+      duration,
+    )
+    return submitWorkflow(graph, jobType, params.shotRef, seed)
+  }
+
+  /** 刷新/切回项目后恢复运行中的任务：重新注册到控制器并挂上轮询，从 /history/{id} 继续查 */
+  async function resumeJob(job: Job): Promise<Job> {
+    if (job.status === 'done' || job.status === 'failed' || job.status === 'canceled') {
+      return job
+    }
+    const { baseUrl } = readConfig()
+    ensureWs(baseUrl)
+    ctrl.setJob(job)
+    activePromptIds.add(job.id)
+    ctrl.startPoller(job.id, () => pollTask(job.id), pollIntervalMs)
+    return job
   }
 
   return {
     id: MEDIA_COMFYUI_ID,
     name: 'ComfyUI 媒体',
-    capabilities: ['text2image', 'text2video', 'image2video'],
+    capabilities: ['text2image', 'text2video', 'image2video', 'editImage'],
     generateImage,
     generateVideo,
+    editImage,
+    resumeJob,
     getJob: ctrl.getJob,
     cancelJob: ctrl.cancelJob,
     onJobUpdate: ctrl.onJobUpdate,
@@ -559,9 +870,15 @@ export function createMediaComfyUIPlugin(opts?: MediaComfyUIOptions): ProviderPl
     providerType: 'media',
     enabled: true,
     description:
-      '调用本地 ComfyUI 工作流生成图片与视频。可在「设置 → ComfyUI 工作流模板」导入 API 格式模板；「文生图模板」用于图片，「视频工作流模板」用于文生视频/图生视频。',
+      '调用本地 ComfyUI 工作流生成图片与视频。可在「设置 → ComfyUI 工作流模板」导入 API 格式模板；「文生图工作流模板」用于图片，「图生图工作流模板」用于参考生图，「视频工作流模板」用于文生视频/图生视频，「视频续写工作流模板」用于参照上一段视频结尾继续生成（如 MiniMax H3 Motion Context）。',
     capabilities: instance.capabilities,
-    configFields: ['baseUrl', 'workflowTemplateId', 'videoWorkflowTemplateId'],
+    configFields: [
+      'baseUrl',
+      'workflowTemplateId',
+      'img2imgWorkflowTemplateId',
+      'videoWorkflowTemplateId',
+      'continuationVideoWorkflowTemplateId',
+    ],
     instance,
   }
 }

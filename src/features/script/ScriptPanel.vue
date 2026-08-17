@@ -14,6 +14,7 @@ const aiOpen = ref(false)
 const idea = ref('')
 const markdown = ref('')
 const busy = ref(false)
+const cutting = ref(false)
 const message = ref('')
 const cutMessage = ref('')
 
@@ -73,24 +74,29 @@ function onImport(): void {
     script.scenes.length > 0 ? `已导入 ${script.scenes.length} 个场次。` : '未解析出任何场次。'
 }
 
-function onCutScene(): void {
+async function onCutScene(): Promise<void> {
   cutMessage.value = ''
   if (!selectedId.value) {
     cutMessage.value = '请先选择一个场次。'
     return
   }
-  const scene = store.scenes.find((s) => s.id === selectedId.value)
-  if (!scene) return
-  const beatIds = new Set(scene.beats.map((b) => b.id))
-  const storyboard = useStoryboardStore()
-  const hasShots = storyboard.shots.some((s) => s.beatRef && beatIds.has(s.beatRef))
-  if (hasShots) {
-    cutMessage.value = '该场次已切分为镜头，如需重新切分请先删除现有镜头。'
-    return
+  cutting.value = true
+  try {
+    const scene = store.scenes.find((s) => s.id === selectedId.value)
+    if (!scene) return
+    const beatIds = new Set(scene.beats.map((b) => b.id))
+    const storyboard = useStoryboardStore()
+    const hasShots = storyboard.shots.some((s) => s.beatRef && beatIds.has(s.beatRef))
+    if (hasShots) {
+      cutMessage.value = '该场次已切分为镜头，如需重新切分请先删除现有镜头。'
+      return
+    }
+    const shots = await features.cutSceneToShots(selectedId.value)
+    cutMessage.value =
+      shots.length > 0 ? `已切分为 ${shots.length} 个镜头。` : '该场次没有节拍，无法切分。'
+  } finally {
+    cutting.value = false
   }
-  const shots = features.cutSceneToShots(selectedId.value)
-  cutMessage.value =
-    shots.length > 0 ? `已切分为 ${shots.length} 个镜头。` : '该场次没有节拍，无法切分。'
 }
 </script>
 
@@ -142,11 +148,12 @@ function onCutScene(): void {
           <Button
             variant="outline"
             size="sm"
-            :disabled="!selectedId || busy"
+            :disabled="!selectedId || busy || cutting"
             data-test="cut-btn"
             @click="onCutScene"
           >
-            一键切分为镜头
+            <span v-if="cutting" class="spinner" aria-hidden="true" />
+            {{ cutting ? '切分中…' : '一键切分为镜头' }}
           </Button>
           <button
             type="button"
@@ -218,3 +225,21 @@ function onCutScene(): void {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.spinner {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 9999px;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+</style>

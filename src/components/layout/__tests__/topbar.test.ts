@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import TopBar from '../TopBar.vue'
 import { usePluginStore } from '../../../stores/pluginStore'
+import { useJobStore } from '../../../stores/jobStore'
 import { useProjects, resetProjectsForTest } from '../../../features/projects/useProjects'
 import { PluginRegistry } from '../../../core'
 import type { Project } from '../../../core/models'
@@ -77,5 +78,39 @@ describe('top bar project management', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(projects.currentProject.value?.name).toBe('新项目甲')
     expect(projects.projects.value).toHaveLength(2)
+  })
+})
+
+describe('top bar task dropdown', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    resetProjectsForTest()
+    installStub(createStorageStub())
+    await useProjects().initProjects()
+  })
+
+  it('shows active jobs with progress in the top-left dropdown', async () => {
+    useJobStore().addJob({ id: 'j1', type: 'text2image', status: 'running', progress: 42 })
+    const w = mount(TopBar)
+    await w.get('[data-test="task-toggle"]').trigger('click')
+    expect(w.findAll('[data-test="task-item"]')).toHaveLength(1)
+    expect(w.get('[data-test="task-item"]').text()).toContain('文生图')
+    expect(w.get('[data-test="task-progress"]').attributes('aria-valuenow')).toBe('42')
+    expect(w.get('[data-test="task-summary"]').text()).toContain('完成')
+  })
+
+  it('shows an empty message when no jobs are running', async () => {
+    const w = mount(TopBar)
+    await w.get('[data-test="task-toggle"]').trigger('click')
+    expect(w.get('[data-test="task-empty"]').text()).toContain('无运行')
+  })
+
+  it('closes the dropdown and emits tasks when opening the full queue', async () => {
+    useJobStore().addJob({ id: 'j2', type: 'tts', status: 'queued', progress: 0 })
+    const w = mount(TopBar)
+    await w.get('[data-test="task-toggle"]').trigger('click')
+    await w.get('[data-test="task-open-all"]').trigger('click')
+    expect(w.emitted('tasks')).toBeTruthy()
+    expect(w.find('[data-test="task-panel"]').exists()).toBe(false)
   })
 })

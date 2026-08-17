@@ -11,6 +11,7 @@ import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useShotActions, buildShotPrompt } from '../useShotActions'
 import { JobSchema } from '../../../core/models'
+import type { Asset } from '../../../core/models'
 import type { MediaCapability } from '../../../core'
 import { PluginRegistry } from '../../../core'
 import { createJobController } from '../../../providers/capabilities'
@@ -26,6 +27,34 @@ function initMedia(delayMs = 30): void {
   const registry = new PluginRegistry()
   registry.register(createStubMediaPlugin({ delayMs }))
   usePluginStore().init(registry)
+}
+
+function initMediaWithStorage(): Asset[] {
+  const registry = new PluginRegistry()
+  registry.register(createStubMediaPlugin({ delayMs: 30 }))
+  const savedRecords: Asset[] = []
+  registry.register({
+    id: 'storage-inline',
+    name: 'Inline Storage',
+    kind: 'provider',
+    providerType: 'storage',
+    enabled: true,
+    instance: {
+      id: 'storage-inline',
+      name: 'Inline Storage',
+      async saveAssetRecord(asset: Asset) {
+        savedRecords.push(asset)
+      },
+      async loadAsset(id: string) {
+        return savedRecords.find((r) => r.id === id)
+      },
+      async getAssetUrl(asset: Asset) {
+        return asset.url
+      },
+    },
+  })
+  usePluginStore().init(registry)
+  return savedRecords
 }
 
 function wait(ms: number): Promise<void> {
@@ -94,6 +123,19 @@ describe('shot grid', () => {
     expect(w.text()).toContain('待生成')
   })
 
+  it('renders the generated video thumbnail for an image2video shot (video appended after the input image)', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '让画面动起来' })
+    store.updateShot(shot.id, {
+      mediaAssets: ['https://example.com/frame.png', 'https://example.com/clip.mp4'],
+    })
+    const w = mount(ShotGrid)
+    await flushPromises()
+    const video = w.get('[data-test="shot-thumb-video"]')
+    expect(video.attributes('src')).toContain('clip.mp4')
+    expect(w.find('[data-test="shot-thumb-img"]').exists()).toBe(false)
+  })
+
   it('emits select with the shot id when a card is clicked', async () => {
     const store = useStoryboardStore()
     const shot = store.addShot({ shotType: 'image' as const, prompt: '第一个' })
@@ -148,6 +190,29 @@ describe('shot editor', () => {
     expect(store.shotById(shot.id)?.negativePrompt).toBe('低质量')
   })
 
+  it('clamps the shot duration to the 10s maximum', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' })
+    const w = mount(ShotEditor, { props: { shotId: shot.id } })
+    await w.get('[data-test="duration"]').setValue('30')
+    expect(store.shotById(shot.id)?.camera?.duration).toBe(10)
+  })
+
+  it('edits the shot dialogue used for subtitles', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' })
+    const w = mount(ShotEditor, { props: { shotId: shot.id } })
+    await w.get('[data-test="dialogue"]').setValue('小明：你好')
+    expect(store.shotById(shot.id)?.metadata.dialogue).toBe('小明：你好')
+  })
+
+  it('shows a continuation hint when the shot continues from a previous video', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video', metadata: { continuationFrom: 'asset-x' } })
+    const w = mount(ShotEditor, { props: { shotId: shot.id } })
+    expect(w.find('[data-test="continuation-hint"]').exists()).toBe(true)
+  })
+
   it('generates media and appends the asset on completion', async () => {
     initMedia()
     const store = useStoryboardStore()
@@ -193,6 +258,17 @@ describe('shot timeline', () => {
     const w = mount(ShotTimeline)
     expect(w.findAll('[data-test="timeline-shot"]')).toHaveLength(2)
     expect(w.text()).toContain('总时长')
+  })
+
+  it('renders a video thumbnail for a video shot with a generated video asset', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '奔跑' })
+    store.updateShot(shot.id, {
+      mediaAssets: ['https://example.com/frame.png', 'https://example.com/clip.mp4'],
+    })
+    const w = mount(ShotTimeline)
+    await flushPromises()
+    expect(w.get('[data-test="timeline-thumb-video"]').attributes('src')).toContain('clip.mp4')
   })
 })
 
@@ -296,6 +372,44 @@ describe('useShotActions', () => {
     store.updateShot(shot.id, { mediaAssets: ['data:image/svg+xml;utf8,FAKE'] })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job?.type).toBe('image2video')
+  })
+
+  it('generateMedia uses the scene image as image2video input when present', async () => {
+    initMedia()
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '让画面动起来' })
+    store.updateShot(shot.id, { metadata: { sceneImageAssetId: 'scene-asset-9' } })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('image2video')
+  })
+
+  it('video shots reference the nearest previous video asset for continuation', async () => {
+    initMedia()
+    const store = useStoryboardStore()
+    const first = store.addShot({ shotType: 'video' as const, prompt: '第一段' })
+    store.updateShot(first.id, {
+      mediaAssets: ['https://example.com/view?filename=prev.mp4&type=output'],
+    })
+    const second = store.addShot({ shotType: 'video' as const, prompt: '第二段' })
+    const job = await useShotActions().generateMedia(second.id)
+    expect(job).toBeDefined()
+    expect(store.shotById(second.id)?.metadata.continuationFrom).toBe(
+      'https://example.com/view?filename=prev.mp4&type=output',
+    )
+  })
+
+  it('cutSceneToShots carries the scene image and scene context into shot metadata', () => {
+    const scriptStore = useScriptStore()
+    const storyboard = useStoryboardStore()
+    const scene = scriptStore.addScene({ title: '屋顶', location: '屋顶', timeOfDay: '夜景' })
+    scriptStore.addBeat(scene.id, { type: 'action', action: '少年抬头' })
+    scriptStore.updateScene(scene.id, { sceneImage: 'scene-asset-1' })
+    const updated = scriptStore.scenes.find((s) => s.id === scene.id)
+    expect(updated).toBeDefined()
+    const shots = storyboard.cutSceneToShots(updated!)
+    expect(shots).toHaveLength(1)
+    expect(shots[0].metadata.sceneImageAssetId).toBe('scene-asset-1')
+    expect(shots[0].metadata.sceneContext).toBe('屋顶，夜景')
   })
 
   it('generateMedia uses text2video for a video shot without an image asset', async () => {
@@ -448,6 +562,31 @@ describe('useShotActions', () => {
     expect(jobs.jobs).toHaveLength(1)
   })
 
+  it('persists generated assets into the storage provider so they survive refresh', async () => {
+    const savedRecords = initMediaWithStorage()
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
+    await useShotActions().generateMedia(shot.id)
+    await wait(100)
+    const assetId = store.shotById(shot.id)?.mediaAssets[0]
+    expect(assetId).toBeDefined()
+    expect(savedRecords.some((a) => a.id === assetId)).toBe(true)
+  })
+
+  it('resolves asset urls from the storage provider even without the media provider', async () => {
+    const savedRecords = initMediaWithStorage()
+    const actions = useShotActions()
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
+    await actions.generateMedia(shot.id)
+    await wait(100)
+    const assetId = store.shotById(shot.id)?.mediaAssets[0]
+    expect(assetId).toBeDefined()
+    const url = await actions.resolveAssetUrl(assetId!)
+    expect(url).toBeDefined()
+    expect(savedRecords.some((a) => a.id === assetId)).toBe(true)
+  })
+
   it('cancelGeneration cancels a running job', async () => {
     initMedia()
     const store = useStoryboardStore()
@@ -501,5 +640,16 @@ describe('buildShotPrompt', () => {
   it('returns the base prompt when there is no camera', () => {
     const shot = { id: 's1', shotType: 'image' as const, prompt: '一只黑猫', metadata: {}, mediaAssets: [] }
     expect(buildShotPrompt(shot)).toBe('一只黑猫')
+  })
+
+  it('prefixes the scene context into the shot prompt', () => {
+    const shot = {
+      id: 's1',
+      shotType: 'image' as const,
+      prompt: '少年抬头',
+      metadata: { sceneContext: '屋顶，夜景' },
+      mediaAssets: [],
+    }
+    expect(buildShotPrompt(shot)).toBe('场景：屋顶，夜景，少年抬头')
   })
 })

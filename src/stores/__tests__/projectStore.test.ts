@@ -44,10 +44,11 @@ describe('project store', () => {
         characterIds: ['c1'],
         scriptId: undefined,
         storyboardRefs: [],
-        characters: [],
-        script: null,
-        shots: [],
-      }),
+            characters: [],
+            script: null,
+            shots: [],
+            jobs: [],
+          }),
     })
     const s = useProjectStore()
     const p = await s.loadProject('p1')

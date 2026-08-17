@@ -137,6 +137,59 @@ describe('usePlayer', () => {
     expect(player.currentIndex.value).toBe(1)
     expect(player.currentTime.value).toBe(0)
   })
+
+  it('uses the real video duration for total/progress and stops at the video end', () => {
+    const store = useStoryboardStore()
+    store.addShot({ shotType: 'image', camera: makeCamera(3) })
+    const videoShot = store.addShot({ shotType: 'video', camera: makeCamera(5) })
+    const player = usePlayer(store.shots)
+    expect(player.total.value).toBe(8)
+    player.seek(1)
+    player.setVideoDuration(videoShot.id, 10)
+    expect(player.total.value).toBe(13)
+    player.play()
+    player.setVideoTime(videoShot.id, 9.9)
+    expect(player.currentTime.value).toBe(9.9)
+    player.videoEnded(videoShot.id)
+    expect(player.playing.value).toBe(false)
+    expect(player.currentTime.value).toBe(10)
+  })
+
+  it('advances to the next shot when the current video ends', () => {
+    const store = useStoryboardStore()
+    const shot1 = store.addShot({ shotType: 'video', camera: makeCamera(5) })
+    store.addShot({ shotType: 'image', camera: makeCamera(2) })
+    const player = usePlayer(store.shots)
+    player.setVideoDuration(shot1.id, 7)
+    player.play()
+    player.videoEnded(shot1.id)
+    expect(player.currentIndex.value).toBe(1)
+    expect(player.currentTime.value).toBe(0)
+  })
+
+  it('advances when a playing video reaches its duration via timeupdate', () => {
+    const store = useStoryboardStore()
+    const shot1 = store.addShot({ shotType: 'video', camera: makeCamera(5) })
+    store.addShot({ shotType: 'image', camera: makeCamera(2) })
+    const player = usePlayer(store.shots)
+    player.setVideoDuration(shot1.id, 4)
+    player.play()
+    player.setVideoTime(shot1.id, 3.9)
+    expect(player.currentIndex.value).toBe(0)
+    player.setVideoTime(shot1.id, 4)
+    expect(player.currentIndex.value).toBe(1)
+  })
+
+  it('ignores video events from a shot that is no longer current', () => {
+    const store = useStoryboardStore()
+    store.addShot({ shotType: 'image', camera: makeCamera(3) })
+    const shot2 = store.addShot({ shotType: 'video', camera: makeCamera(5) })
+    const player = usePlayer(store.shots)
+    player.setVideoDuration(shot2.id, 10)
+    player.seek(0)
+    player.setVideoTime(shot2.id, 8)
+    expect(player.currentTime.value).toBe(0)
+  })
 })
 
 describe('shot player', () => {
@@ -163,6 +216,34 @@ describe('shot player', () => {
     const w = mount(ShotPlayer, { props: { shot, playing: true } })
     await flushPromises()
     expect(w.find('[data-test="shot-video"]').exists()).toBe(true)
+  })
+
+  it('keeps the video aspect ratio with object-contain', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video', mediaAssets: ['https://example.com/clip.mp4'] })
+    const w = mount(ShotPlayer, { props: { shot } })
+    await flushPromises()
+    expect(w.get('[data-test="shot-video"]').classes()).toContain('object-contain')
+  })
+
+  it('emits video-ended with the shot id when the video ends', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video', mediaAssets: ['https://example.com/clip.mp4'] })
+    const w = mount(ShotPlayer, { props: { shot } })
+    await flushPromises()
+    await w.get('[data-test="shot-video"]').trigger('ended')
+    expect(w.emitted('video-ended')?.[0]).toEqual([shot.id])
+  })
+
+  it('renders the generated video for an image2video shot instead of the input image', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({
+      shotType: 'video',
+      mediaAssets: ['data:image/svg+xml;utf8,FAKE', 'https://example.com/clip.mp4'],
+    })
+    const w = mount(ShotPlayer, { props: { shot, playing: true } })
+    await flushPromises()
+    expect(w.get('[data-test="shot-video"]').attributes('src')).toContain('clip.mp4')
   })
 
   it('shows the image placeholder when a video asset resolves to a data:image url', async () => {
@@ -236,5 +317,16 @@ describe('player panel', () => {
     store.addShot({ shotType: 'image', beatRef: beat.id, camera: makeCamera(3) })
     const w = mount(PlayerPanel)
     expect(w.get('[data-test="player-subtitle"]').text()).toBe('小明：你好')
+  })
+
+  it('shows dialogue stored on the shot metadata (LLM split shots)', () => {
+    const store = useStoryboardStore()
+    store.addShot({
+      shotType: 'video',
+      camera: makeCamera(4),
+      metadata: { dialogue: '小明：你好\n小红：再见' },
+    })
+    const w = mount(PlayerPanel)
+    expect(w.get('[data-test="player-subtitle"]').text()).toBe('小明：你好\n小红：再见')
   })
 })

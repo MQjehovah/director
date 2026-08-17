@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useProjects } from '../../features/projects/useProjects'
-import { Button, Dialog, Input } from '../ui'
+import { useJobStore } from '../../stores/jobStore'
+import { jobStatusInfo, jobTypeLabel } from '../../features/jobs/jobMeta'
+import { Badge, Button, Dialog, Input, Progress } from '../ui'
 
 const emit = defineEmits<{
   (e: 'settings'): void
+  (e: 'tasks'): void
 }>()
 
 const projects = useProjects()
+const jobStore = useJobStore()
 
 const open = ref(false)
 const newName = ref('')
@@ -15,6 +19,18 @@ const renameId = ref<string | null>(null)
 const renameValue = ref('')
 const busy = ref(false)
 const error = ref('')
+const taskOpen = ref(false)
+
+const activeJobs = computed(() =>
+  jobStore.jobs.filter((j) => j.status === 'queued' || j.status === 'running'),
+)
+const doneCount = computed(() => jobStore.jobs.filter((j) => j.status === 'done').length)
+const failedCount = computed(() => jobStore.jobs.filter((j) => j.status === 'failed').length)
+
+function openTasks(): void {
+  taskOpen.value = false
+  emit('tasks')
+}
 
 async function openDialog(): Promise<void> {
   error.value = ''
@@ -104,13 +120,76 @@ async function onDelete(id: string): Promise<void> {
     </div>
 
     <div class="ml-auto flex items-center gap-4">
-      <span class="hidden text-xs text-ink-muted md:inline">
-        {{ projects.projects.value.length }} 个项目
-      </span>
-      <span class="flex items-center gap-1.5 text-xs text-ink-muted">
-        <span class="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-        Provider 就绪
-      </span>
+      <div class="relative" data-test="task-menu">
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded-md border border-edge px-2 py-1 text-xs text-ink-muted transition-colors hover:border-zinc-600 hover:text-ink"
+          data-test="task-toggle"
+          @click="taskOpen = !taskOpen"
+        >
+          <span
+            class="h-1.5 w-1.5 rounded-full"
+            :class="activeJobs.length > 0 ? 'bg-amber-400' : 'bg-zinc-600'"
+          />
+          {{ activeJobs.length > 0 ? `任务 ${activeJobs.length}` : '任务' }}
+          <span class="text-[10px] text-ink-muted">▾</span>
+        </button>
+
+        <div
+          v-if="taskOpen"
+          class="fixed inset-0 z-40"
+          data-test="task-backdrop"
+          @click="taskOpen = false"
+        />
+
+        <div
+          v-if="taskOpen"
+          class="absolute right-0 top-full z-50 mt-1 w-80 overflow-hidden rounded-lg border border-edge bg-panel shadow-2xl"
+          data-test="task-panel"
+        >
+          <div class="max-h-80 overflow-y-auto p-2">
+            <p
+              v-if="activeJobs.length === 0"
+              class="px-2 py-3 text-xs text-ink-muted"
+              data-test="task-empty"
+            >
+              当前无运行中的任务
+            </p>
+            <ul v-else class="flex flex-col gap-2">
+              <li
+                v-for="j in activeJobs"
+                :key="j.id"
+                class="rounded-md border border-edge bg-raised p-2"
+                data-test="task-item"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <span class="truncate text-xs font-medium text-ink">{{ jobTypeLabel(j.type) }}</span>
+                  <Badge :variant="jobStatusInfo(j.status).variant">
+                    {{ jobStatusInfo(j.status).label }}
+                  </Badge>
+                </div>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <Progress :value="j.progress" data-test="task-progress" class="min-w-0 flex-1" />
+                  <span class="shrink-0 text-[10px] text-ink-muted">{{ j.progress }}%</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+          <footer class="flex items-center justify-between gap-2 border-t border-edge px-3 py-2">
+            <span class="text-[10px] text-ink-muted" data-test="task-summary">
+              {{ doneCount }} 完成 · {{ failedCount }} 失败
+            </span>
+            <button
+              type="button"
+              class="text-xs text-amber-300 transition-colors hover:text-amber-200"
+              data-test="task-open-all"
+              @click="openTasks"
+            >
+              任务队列 →
+            </button>
+          </footer>
+        </div>
+      </div>
       <Button variant="ghost" size="sm" data-test="topbar-settings" @click="emit('settings')">设置</Button>
       <Button variant="primary" size="sm">导出</Button>
     </div>

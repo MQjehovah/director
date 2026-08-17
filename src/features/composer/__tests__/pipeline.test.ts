@@ -6,6 +6,7 @@ import type { PipelineStep, RunReport } from '../PipelineRunner'
 import {
   scriptStep,
   cutStep,
+  sceneArtStep,
   portraitStep,
   renderStep,
   voiceStep,
@@ -180,6 +181,34 @@ describe('preset steps', () => {
     expect(report.results['portrait']).toMatchObject({ portraitCount: 0 })
   })
 
+  it('sceneArtStep generates scene images for scenes without one', async () => {
+    initProviders({ media: true })
+    const scriptStore = useScriptStore()
+    const scene = scriptStore.addScene({ title: '屋顶', location: '屋顶', timeOfDay: '夜景' })
+    scriptStore.addBeat(scene.id, { type: 'action', action: '少年抬头' })
+    const report = await runSteps([sceneArtStep()])
+    expect(report.ok).toBe(true)
+    expect(report.results['scene-art']).toMatchObject({ sceneCount: 1 })
+    expect(useJobStore().jobs.some((j) => j.type === 'text2image')).toBe(true)
+  })
+
+  it('sceneArtStep skips scenes that already have a scene image', async () => {
+    initProviders({ media: true })
+    const scriptStore = useScriptStore()
+    scriptStore.addScene({ title: '屋顶', sceneImage: 'scene-asset-1' })
+    const report = await runSteps([sceneArtStep()])
+    expect(report.ok).toBe(true)
+    expect(report.results['scene-art']).toMatchObject({ sceneCount: 0 })
+  })
+
+  it('sceneArtStep fails with a clear error when the media provider is missing', async () => {
+    const scriptStore = useScriptStore()
+    scriptStore.addScene({ title: '屋顶' })
+    const report = await runSteps([sceneArtStep()])
+    expect(report.errors['scene-art']).toContain('媒体')
+    expect(report.ok).toBe(false)
+  })
+
   it('voiceStep creates jobs for dialogue shots when TTS is available', async () => {
     initProviders({ tts: true })
     const scriptStore = useScriptStore()
@@ -233,7 +262,15 @@ describe('preset steps', () => {
     expect(useScriptStore().scenes.length).toBeGreaterThan(0)
     expect(useStoryboardStore().shots.length).toBeGreaterThan(0)
     expect(useJobStore().jobs.length).toBeGreaterThan(0)
-    expect(report.completed).toEqual(['script', 'cut', 'portrait', 'render', 'voice', 'assemble'])
+    expect(report.completed).toEqual([
+      'script',
+      'cut',
+      'scene-art',
+      'portrait',
+      'render',
+      'voice',
+      'assemble',
+    ])
   })
 })
 
@@ -244,9 +281,10 @@ describe('pipeline editor', () => {
 
   it('renders a row per step with its title', () => {
     const w = mount(PipelineEditor, { props: { steps: presetPipeline() } })
-    expect(w.findAll('[data-test="step-row"]')).toHaveLength(6)
+    expect(w.findAll('[data-test="step-row"]')).toHaveLength(7)
     expect(w.text()).toContain('生成剧本')
     expect(w.text()).toContain('切分镜头')
+    expect(w.text()).toContain('生成场景图')
     expect(w.text()).toContain('配音')
     expect(w.text()).toContain('组装成片')
   })

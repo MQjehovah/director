@@ -5,7 +5,9 @@ export type JobStatusVariant = 'neutral' | 'success' | 'warning' | 'danger'
 export const JOB_TYPE_LABELS: Record<string, string> = {
   text2image: '文生图',
   image2video: '图生视频',
+  videoContinue: '视频续写',
   text2video: '文生视频',
+  editImage: '图生图',
   upscale: '超分',
   tts: '配音',
   llm: 'AI 文本',

@@ -10,6 +10,8 @@ export function capabilityForJobType(type: string | undefined): MediaCapability 
       return 'text2image'
     case 'image2video':
       return 'image2video'
+    case 'videoContinue':
+      return 'image2video'
     case 'text2video':
       return 'text2video'
     case 'upscale':

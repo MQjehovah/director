@@ -4,11 +4,17 @@ import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useShotActions } from './useShotActions'
 import { Badge, Button, Input, Progress, Select, Textarea } from '../../components/ui'
 import type { SelectOption } from '../../components/ui'
+import { DEFAULT_SHOT_DURATION, MAX_SHOT_DURATION } from '../../core/models'
 import type { Shot } from '../../core/models'
 
 type CameraShape = NonNullable<Shot['camera']>
 
-const DEFAULT_CAMERA: CameraShape = { shotSize: 'medium', angle: 'eye-level', move: 'static', duration: 5 }
+const DEFAULT_CAMERA: CameraShape = {
+  shotSize: 'medium',
+  angle: 'eye-level',
+  move: 'static',
+  duration: DEFAULT_SHOT_DURATION,
+}
 
 const props = defineProps<{ shotId: string }>()
 
@@ -75,6 +81,17 @@ function setPrompt(value: string): void {
   setField({ prompt: value.trim() === '' ? undefined : value })
 }
 
+function setDialogue(value: string): void {
+  const text = value.trim()
+  if (!shot.value) return
+  setField({
+    metadata: {
+      ...(shot.value.metadata ?? {}),
+      ...(text ? { dialogue: text } : { dialogue: undefined }),
+    },
+  })
+}
+
 function setNegativePrompt(value: string): void {
   setField({ negativePrompt: value.trim() === '' ? undefined : value })
 }
@@ -91,7 +108,11 @@ function setSeed(value: string): void {
 
 function setDuration(value: string): void {
   const duration = Number(value)
-  setCameraField('duration', Number.isFinite(duration) && duration > 0 ? duration : DEFAULT_CAMERA.duration)
+  const clamped =
+    Number.isFinite(duration) && duration > 0
+      ? Math.min(Math.max(duration, 1), MAX_SHOT_DURATION)
+      : DEFAULT_CAMERA.duration
+  setCameraField('duration', clamped)
 }
 
 function setShotSize(value: string): void {
@@ -191,6 +212,13 @@ async function onRemove(): Promise<void> {
           @update:model-value="setShotType"
         />
       </label>
+      <p
+        v-if="shot.metadata?.continuationFrom"
+        class="text-xs text-amber-300"
+        data-test="continuation-hint"
+      >
+        将延续上一段视频的结尾继续生成
+      </p>
 
       <div class="grid grid-cols-2 gap-2">
         <label class="block text-xs font-medium text-ink-muted">
@@ -231,6 +259,7 @@ async function onRemove(): Promise<void> {
           <Input
             class="mt-1"
             type="number"
+            :max="String(MAX_SHOT_DURATION)"
             :model-value="String(shot.camera?.duration ?? DEFAULT_CAMERA.duration)"
             data-test="duration"
             @update:model-value="setDuration"
@@ -247,6 +276,18 @@ async function onRemove(): Promise<void> {
           placeholder="画面描述，例如：夕阳下的少年抬头望向天空"
           data-test="prompt"
           @update:model-value="setPrompt"
+        />
+      </label>
+
+      <label class="block text-xs font-medium text-ink-muted">
+        台词（字幕）
+        <Textarea
+          class="mt-1"
+          :model-value="typeof shot.metadata?.dialogue === 'string' ? shot.metadata.dialogue : ''"
+          :rows="2"
+          placeholder="该镜头内出现的台词，逐行填写，用于成片字幕"
+          data-test="dialogue"
+          @update:model-value="setDialogue"
         />
       </label>
 

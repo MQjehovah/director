@@ -62,7 +62,7 @@ export function createProjectTools(): AgentTool[] {
           const scene = scriptStore.scenes.find((s) => s.id === sceneId)
           if (!scene) return failure('cut_scene', `未找到场次「${sceneId}」`)
           if (scene.beats.length === 0) return failure('cut_scene', '该场次没有节拍，无法切分')
-          const shots = useScriptFeatures().cutSceneToShots(sceneId)
+          const shots = await useScriptFeatures().cutSceneToShots(sceneId)
           const shotList = shots.map((s) => s.id).join('、')
           return {
             name: 'cut_scene',

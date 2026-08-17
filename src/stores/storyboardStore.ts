@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { ShotSchema } from '../core/models'
+import { DEFAULT_SHOT_DURATION, ShotSchema } from '../core/models'
 import type { Scene, Shot } from '../core/models'
 
 export type ShotInput = Omit<Partial<Shot>, 'id'> & { shotType: Shot['shotType'] }
@@ -18,7 +18,12 @@ export const useStoryboardStore = defineStore('storyboard', () => {
     const shot = ShotSchema.parse({
       id: nextShotId(),
       ...data,
-      camera: data.camera ?? { shotSize: 'medium', angle: 'eye-level', move: 'static', duration: 5 },
+      camera: data.camera ?? {
+        shotSize: 'medium',
+        angle: 'eye-level',
+        move: 'static',
+        duration: DEFAULT_SHOT_DURATION,
+      },
     })
     shots.value.push(shot)
     return shot
@@ -32,6 +37,10 @@ export const useStoryboardStore = defineStore('storyboard', () => {
 
   function removeShot(id: string): void {
     shots.value = shots.value.filter((s) => s.id !== id)
+  }
+
+  function removeSceneShots(sceneId: string): void {
+    shots.value = shots.value.filter((s) => s.sceneId !== sceneId)
   }
 
   /** 持久化恢复：按原 id 批量还原，并把序号推进到已用最大值，避免新 id 冲突 */
@@ -70,14 +79,24 @@ export const useStoryboardStore = defineStore('storyboard', () => {
     // 按场次清理：重新切分该场次时，移除该场次原有镜头
     shots.value = shots.value.filter((s) => s.sceneId !== scene.id)
     const created: Shot[] = []
+    const context = [scene.location, scene.timeOfDay].filter(Boolean).join('，')
     for (const beat of scene.beats) {
       const shot = ShotSchema.parse({
         id: nextShotId(),
         sceneId: scene.id,
         beatRef: beat.id,
-        shotType: 'image',
-        camera: { shotSize: 'medium', angle: 'eye-level', move: 'static', duration: 5 },
+        shotType: 'video',
+        camera: {
+          shotSize: 'medium',
+          angle: 'eye-level',
+          move: 'static',
+          duration: DEFAULT_SHOT_DURATION,
+        },
         prompt: beat.action ?? beat.dialogue?.text,
+        metadata: {
+          ...(scene.sceneImage ? { sceneImageAssetId: scene.sceneImage } : {}),
+          ...(context ? { sceneContext: context } : {}),
+        },
       })
       created.push(shot)
       shots.value.push(shot)
@@ -102,6 +121,7 @@ export const useStoryboardStore = defineStore('storyboard', () => {
     addShot,
     updateShot,
     removeShot,
+    removeSceneShots,
     moveShot,
     reorder,
     cutSceneToShots,

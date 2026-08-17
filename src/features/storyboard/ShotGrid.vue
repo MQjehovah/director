@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
-import { useShotActions } from './useShotActions'
+import { displayAssetOf, useShotActions } from './useShotActions'
 import { Badge, Progress } from '../../components/ui'
 import type { Job, Shot } from '../../core/models'
 
@@ -144,8 +144,8 @@ function onDrop(e: DragEvent, shotId: string): void {
             class="relative block aspect-video w-full overflow-hidden rounded-md border border-edge bg-zinc-900"
           >
             <video
-              v-if="thumbIsVideo(shot.mediaAssets[0])"
-              :src="actions.thumbUrl(shot.mediaAssets[0])"
+              v-if="thumbIsVideo(displayAssetOf(shot))"
+              :src="actions.thumbUrl(displayAssetOf(shot))"
               data-test="shot-thumb-video"
               muted
               playsinline
@@ -153,8 +153,8 @@ function onDrop(e: DragEvent, shotId: string): void {
               class="h-full w-full object-cover"
             />
             <img
-              v-else-if="shot.mediaAssets.length > 0 && actions.thumbUrl(shot.mediaAssets[0])"
-              :src="actions.thumbUrl(shot.mediaAssets[0])"
+              v-else-if="shot.mediaAssets.length > 0 && actions.thumbUrl(displayAssetOf(shot))"
+              :src="actions.thumbUrl(displayAssetOf(shot))"
               data-test="shot-thumb-img"
               class="h-full w-full object-cover"
               alt=""

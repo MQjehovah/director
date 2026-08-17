@@ -86,6 +86,10 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
     return asset
   }
 
+  async function saveAssetRecord(asset: Asset): Promise<void> {
+    await getDb(databaseName).assets.put(asset)
+  }
+
   async function loadAsset(id: string): Promise<Asset | undefined> {
     const record = await getDb(databaseName).assets.get(id)
     if (!record) return undefined
@@ -122,6 +126,7 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
     listProjects,
     deleteProject,
     saveAsset,
+    saveAssetRecord,
     loadAsset,
     getAssetUrl,
     revokeAssetUrl,

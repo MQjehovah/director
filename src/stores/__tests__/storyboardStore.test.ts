@@ -11,6 +11,8 @@ function makeScene(): Scene {
       { id: 'beat-1', type: 'dialogue', dialogue: { speaker: '小明', text: '你好' } },
       { id: 'beat-2', type: 'action', action: '小红挥手' },
     ],
+    referenceImages: [],
+    metadata: {},
   }
 }
 
@@ -33,11 +35,11 @@ describe('storyboard store', () => {
     expect(s.shots).toHaveLength(2)
     expect(s.shotById(c.id)).toBeUndefined()
   })
-  it('cuts a scene into one image shot per beat', () => {
+  it('cuts a scene into one video shot per beat', () => {
     const s = useStoryboardStore()
     const shots = s.cutSceneToShots(makeScene())
     expect(shots).toHaveLength(2)
-    expect(shots[0].shotType).toBe('image')
+    expect(shots[0].shotType).toBe('video')
     expect(shots[0].beatRef).toBe('beat-1')
     expect(shots[0].id).toBe('shot-1')
     expect(shots[1].id).toBe('shot-2')

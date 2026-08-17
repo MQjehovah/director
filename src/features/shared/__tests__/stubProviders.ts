@@ -4,6 +4,7 @@ import type { ProviderPlugin } from '../../../core/plugin/types'
 import { createJobController } from '../../../providers/capabilities/shared'
 import type {
   ImageToVideoParams,
+  ImageEditParams,
   TextToImageParams,
   TextToVideoParams,
 } from '../../../providers/capabilities'
@@ -26,6 +27,7 @@ export function createStubMediaProvider(opts: { delayMs?: number } = {}): {
   name: string
   capabilities: string[]
   generateImage: (p: TextToImageParams) => Promise<Job>
+  editImage: (p: ImageEditParams) => Promise<Job>
   generateVideo: (p: ImageToVideoParams | TextToVideoParams) => Promise<Job>
   getJob: (id: string) => Promise<Job>
   onJobUpdate: (cb: (job: Job) => void) => () => void
@@ -97,12 +99,38 @@ export function createStubMediaProvider(opts: { delayMs?: number } = {}): {
     return job
   }
 
+  async function editImage(p: ImageEditParams): Promise<Job> {
+    const assetId = nextId('asset')
+    const asset = AssetSchema.parse({
+      id: assetId,
+      kind: 'image',
+      source: 'ai',
+      url: placeholderSvgUrl(p.prompt?.slice(0, 8) || 'edit'),
+    })
+    assets.set(assetId, asset)
+    const job = JobSchema.parse({
+      id: nextId('job'),
+      type: 'editImage',
+      status: 'running',
+      progress: 5,
+      shotRef: p.shotRef,
+      pluginId: 'stub-media',
+      params: { prompt: p.prompt, imageAssetId: p.imageAssetId },
+    })
+    ctrl.setJob(job)
+    setTimeout(() => {
+      ctrl.patchJob(job.id, { status: 'done', progress: 100, result: { assetIds: [assetId] } })
+    }, delayMs)
+    return job
+  }
+
   return {
     id: 'stub-media',
     name: 'Stub 媒体',
-    capabilities: ['text2image', 'image2video', 'text2video'],
+    capabilities: ['text2image', 'image2video', 'text2video', 'editImage'],
     generateImage,
     generateVideo,
+    editImage,
     getJob: ctrl.getJob,
     onJobUpdate: ctrl.onJobUpdate,
     cancelJob: ctrl.cancelJob,

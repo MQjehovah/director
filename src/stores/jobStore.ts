@@ -63,6 +63,15 @@ export const useJobStore = defineStore('job', () => {
     jobs.value = jobs.value.filter((j) => j.id !== id)
   }
 
+  function removeAll(): void {
+    jobs.value = []
+  }
+
+  /** 持久化恢复：按原任务数据原样还原 */
+  function restoreJobs(list: Job[]): void {
+    jobs.value = list.map((j) => JobSchema.parse(j))
+  }
+
   function jobsForShot(shotRef: string): Job[] {
     return jobs.value.filter((j) => j.shotRef === shotRef)
   }
@@ -76,6 +85,8 @@ export const useJobStore = defineStore('job', () => {
     markFailed,
     markCanceled,
     removeJob,
+    removeAll,
+    restoreJobs,
     getJob,
     jobsForShot,
   }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
-import { useShotActions } from './useShotActions'
+import { displayAssetOf, useShotActions } from './useShotActions'
 import { Badge, Progress } from '../../components/ui'
 import type { Job, Shot } from '../../core/models'
 
@@ -13,6 +13,16 @@ const emit = defineEmits<{
 
 const store = useStoryboardStore()
 const actions = useShotActions()
+
+const assetIds = computed(() => store.shots.flatMap((s) => s.mediaAssets))
+
+watch(
+  assetIds,
+  (ids) => {
+    for (const id of ids) void actions.resolveAssetUrl(id)
+  },
+  { immediate: true },
+)
 
 const totalDuration = computed(() => store.shots.reduce((sum, s) => sum + durationOf(s), 0))
 
@@ -35,6 +45,18 @@ function activeJobOf(shotId: string): Job | undefined {
   const job = actions.jobForShot(shotId)
   return job && (job.status === 'queued' || job.status === 'running') ? job : undefined
 }
+
+function thumbUrlOf(assetId: string | undefined): string | undefined {
+  return assetId ? actions.thumbUrl(assetId) : undefined
+}
+
+function thumbIsVideo(assetId: string | undefined): boolean {
+  const url = thumbUrlOf(assetId)
+  if (!url) return false
+  if (url.startsWith('data:video') || url.startsWith('blob:video')) return true
+  if (url.startsWith('http')) return /\.(mp4|m4v|webm|mov)([?#&]|$)/i.test(url)
+  return false
+}
 </script>
 
 <template>
@@ -56,9 +78,18 @@ function activeJobOf(shotId: string): Job | undefined {
         @click="emit('select', shot.id)"
       >
         <span class="relative block aspect-video w-full overflow-hidden rounded border border-edge bg-zinc-900">
+          <video
+            v-if="thumbIsVideo(displayAssetOf(shot))"
+            :src="actions.thumbUrl(displayAssetOf(shot))"
+            data-test="timeline-thumb-video"
+            muted
+            playsinline
+            preload="metadata"
+            class="h-full w-full object-cover"
+          />
           <img
-            v-if="shot.mediaAssets.length > 0 && actions.thumbUrl(shot.mediaAssets[0])"
-            :src="actions.thumbUrl(shot.mediaAssets[0])"
+            v-else-if="shot.mediaAssets.length > 0 && actions.thumbUrl(displayAssetOf(shot))"
+            :src="actions.thumbUrl(displayAssetOf(shot))"
             class="h-full w-full object-cover"
             alt=""
           />

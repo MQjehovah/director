@@ -3,7 +3,7 @@ import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useScriptStore } from '../../stores/scriptStore'
 import { Button, Progress } from '../../components/ui'
 import { usePlayer } from './usePlayer'
-import { beatDialogueForShot, shotDuration } from './subtitles'
+import { beatDialogueForShot } from './subtitles'
 import ShotPlayer from './ShotPlayer.vue'
 import type { Shot } from '../../core/models'
 
@@ -11,6 +11,8 @@ const store = useStoryboardStore()
 const scriptStore = useScriptStore()
 
 function getDialogue(shot: Shot): string | undefined {
+  const stored = shot.metadata?.dialogue
+  if (typeof stored === 'string' && stored.trim().length > 0) return stored
   return (shot as { dialogue?: string }).dialogue ?? beatDialogueForShot(scriptStore.script, shot)
 }
 
@@ -18,7 +20,7 @@ const player = usePlayer(store.shots, { getDialogue })
 
 function widthPct(shot: Shot): number {
   const denom = player.total.value
-  return denom > 0 ? Math.max((shotDuration(shot) / denom) * 100, 6) : 0
+  return denom > 0 ? Math.max((player.durationOf(shot) / denom) * 100, 6) : 0
 }
 </script>
 
@@ -45,6 +47,11 @@ function widthPct(shot: Shot): number {
           :shot="player.currentShot.value"
           :subtitle="player.currentSubtitle.value?.text"
           :playing="player.playing.value"
+          @video-duration="player.setVideoDuration"
+          @video-time="player.setVideoTime"
+          @video-ended="player.videoEnded"
+          @video-play="player.videoPlay"
+          @video-pause="player.videoPause"
         />
       </div>
 

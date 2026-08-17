@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useProjects, resetProjectsForTest, LEGACY_WORKSPACE_ID } from '../useProjects'
 import { useCharacterStore } from '../../../stores/characterStore'
+import { useJobStore } from '../../../stores/jobStore'
 import { useScriptStore } from '../../../stores/scriptStore'
 import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { usePluginStore } from '../../../stores/pluginStore'
@@ -112,6 +113,23 @@ describe('useProjects', () => {
     await p.renameProject(p.currentProjectId.value!, '改名后')
     expect(p.currentProject.value?.name).toBe('改名后')
     expect(p.projects.value[0].name).toBe('改名后')
+  })
+
+  it('persists and restores jobs with the project snapshot', async () => {
+    const p = useProjects()
+    await p.initProjects()
+    const firstId = p.currentProjectId.value!
+    useJobStore().addJob({ id: 'j1', type: 'text2image', status: 'running', progress: 30 })
+    await p.createProject('项目B')
+    expect(useJobStore().jobs).toHaveLength(0)
+    await p.switchProject(firstId)
+    expect(useJobStore().jobs).toHaveLength(1)
+    expect(useJobStore().getJob('j1')).toMatchObject({
+      id: 'j1',
+      type: 'text2image',
+      status: 'running',
+      progress: 30,
+    })
   })
 
   it('migrates a legacy workspace record into a default project', async () => {

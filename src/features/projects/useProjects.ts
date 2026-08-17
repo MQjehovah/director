@@ -1,5 +1,6 @@
 import { ref, watch } from 'vue'
 import { useCharacterStore } from '../../stores/characterStore'
+import { useJobStore } from '../../stores/jobStore'
 import { useScriptStore } from '../../stores/scriptStore'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { usePluginStore } from '../../stores/pluginStore'
@@ -7,6 +8,7 @@ import { ProjectSchema } from '../../core/models'
 import type { Project } from '../../core/models'
 import { newId } from '../../core/utils/id'
 import type { StorageProvider } from '../../providers'
+import { reconcileJobs } from '../jobs/reconcileJobs'
 
 export const LEGACY_WORKSPACE_ID = 'workspace'
 const AUTOSAVE_DELAY_MS = 500
@@ -36,6 +38,7 @@ function getStorage(): StorageProvider | undefined {
 
 function buildSnapshot(projectId: string, projectName: string): Project {
   const characterStore = useCharacterStore()
+  const jobStore = useJobStore()
   const scriptStore = useScriptStore()
   const storyboardStore = useStoryboardStore()
   return {
@@ -57,6 +60,7 @@ function buildSnapshot(projectId: string, projectName: string): Project {
         }
       : null,
     shots: storyboardStore.shots.map((s) => ({ ...s, mediaAssets: [...s.mediaAssets] })),
+    jobs: jobStore.jobs.map((j) => ({ ...j })),
   }
 }
 
@@ -69,9 +73,11 @@ export function useProjects() {
 
   function resetWorkspace(): void {
     const characterStore = useCharacterStore()
+    const jobStore = useJobStore()
     const scriptStore = useScriptStore()
     const storyboardStore = useStoryboardStore()
     characterStore.characters.splice(0)
+    jobStore.removeAll()
     scriptStore.clearScript()
     storyboardStore.shots.splice(0)
   }
@@ -79,12 +85,16 @@ export function useProjects() {
   /** 从已加载的 Project 恢复工作区（角色/剧本/分镜） */
   function applyProject(saved: Project): void {
     const characterStore = useCharacterStore()
+    const jobStore = useJobStore()
     const scriptStore = useScriptStore()
     const storyboardStore = useStoryboardStore()
     currentProject.value = saved
     characterStore.restoreCharacters(saved.characters)
     if (saved.script) scriptStore.setScript(saved.script)
     storyboardStore.restoreShots(saved.shots)
+    jobStore.restoreJobs(saved.jobs)
+    // 刷新/切回项目后：恢复任务列表，并尝试与媒体 Provider 对账（运行中的任务续跑）
+    void reconcileJobs()
   }
 
   /** 启动初始化：迁移旧 workspace、列出项目、默认加载最近项目 */
@@ -193,6 +203,7 @@ export function useProjects() {
   /** 监听领域 store，防抖保存当前项目快照 */
   function startAutoSave(): void {
     const characterStore = useCharacterStore()
+    const jobStore = useJobStore()
     const scriptStore = useScriptStore()
     const storyboardStore = useStoryboardStore()
     watch(
@@ -200,6 +211,7 @@ export function useProjects() {
         characterStore.characters,
         scriptStore.script,
         storyboardStore.shots,
+        jobStore.jobs,
         currentProject.value?.name,
       ],
       () => {

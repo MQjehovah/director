@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { CharacterSchema } from './character'
+import { JobSchema } from './job'
 import { ScriptSchema } from './script'
 import { ShotSchema } from './shot'
 
@@ -14,6 +15,7 @@ export const ProjectSchema = z.object({
   characters: z.array(CharacterSchema).default([]),
   script: ScriptSchema.nullable().default(null),
   shots: z.array(ShotSchema).default([]),
+  jobs: z.array(JobSchema).default([]),
 })
 
 export type Project = z.infer<typeof ProjectSchema>

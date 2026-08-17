@@ -81,13 +81,23 @@ const FIELD_META: Record<
     multiline: true,
   },
   workflowTemplateId: {
-    label: '工作流模板',
-    placeholder: '选择已保存的 ComfyUI 工作流模板',
+    label: '文生图工作流模板',
+    placeholder: '选择已保存的文生图工作流模板',
     templateSelect: true,
   },
   videoWorkflowTemplateId: {
     label: '视频工作流模板',
     placeholder: '选择用于文生视频/图生视频的 ComfyUI 工作流模板',
+    templateSelect: true,
+  },
+  img2imgWorkflowTemplateId: {
+    label: '图生图工作流模板',
+    placeholder: '选择用于参考生图（图生图）的 ComfyUI 工作流模板',
+    templateSelect: true,
+  },
+  continuationVideoWorkflowTemplateId: {
+    label: '视频续写工作流模板',
+    placeholder: '选择用于参照上一段视频结尾继续生成（如 MiniMax H3 Motion Context）的模板',
     templateSelect: true,
   },
 }

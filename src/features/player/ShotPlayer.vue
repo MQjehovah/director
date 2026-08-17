@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useShotActions } from '../storyboard/useShotActions'
+import { displayAssetOf, useShotActions } from '../storyboard/useShotActions'
 import { shotDuration } from './subtitles'
 import type { Shot } from '../../core/models'
 
@@ -16,21 +16,27 @@ const props = withDefaults(
   },
 )
 
+const emit = defineEmits<{
+  (e: 'video-duration', shotId: string, duration: number): void
+  (e: 'video-time', shotId: string, time: number): void
+  (e: 'video-ended', shotId: string): void
+  (e: 'video-play', shotId: string): void
+  (e: 'video-pause', shotId: string): void
+}>()
+
 const actions = useShotActions()
-const resolvedUrl = ref<string | undefined>(undefined)
+
+// 展示生成结果：生成总是把新资产追加到 mediaAssets 末尾，取最后一项，
+// 这样 image2video（输入图 + 输出视频）展示的是视频而不是输入图。
+const assetId = computed(() => displayAssetOf(props.shot))
+// 共享缓存是响应式的：其他面板先解析完成时这里也会自动更新，避免一次性 Promise 的竞态。
+const resolvedUrl = computed(() => actions.thumbUrl(assetId.value))
 
 watch(
-  () => props.shot.mediaAssets[0],
-  (assetId, _old, onCleanup) => {
-    resolvedUrl.value = undefined
-    if (!assetId) return
-    let cancelled = false
-    void actions.resolveAssetUrl(assetId).then((url) => {
-      if (!cancelled) resolvedUrl.value = url
-    })
-    onCleanup(() => {
-      cancelled = true
-    })
+  assetId,
+  (id) => {
+    if (!id) return
+    void actions.resolveAssetUrl(id)
   },
   { immediate: true },
 )
@@ -64,6 +70,42 @@ const kenBurnsStyle = computed(() => ({
   animationDuration: `${duration.value}s`,
   animationPlayState: props.playing ? 'running' : 'paused',
 }))
+
+const videoRef = ref<HTMLVideoElement | null>(null)
+
+// 用指令式 play/pause 与成片播放状态同步：autoplay 属性在运行中切换并不可靠，
+// 且只靠它无法在暂停时真正暂停视频。
+watch(
+  () => [props.playing, props.shot.id, resolvedUrl.value] as const,
+  () => {
+    const video = videoRef.value
+    if (!video) return
+    try {
+      if (props.playing) {
+        const result = video.play()
+        if (result && typeof result.catch === 'function') result.catch(() => {})
+      } else {
+        video.pause()
+      }
+    } catch {
+      // 测试环境（jsdom）不支持媒体播放时静默
+    }
+  },
+  { immediate: true, flush: 'post' },
+)
+
+function reportDuration(): void {
+  const video = videoRef.value
+  if (!video) return
+  const d = video.duration
+  if (Number.isFinite(d) && d > 0) emit('video-duration', props.shot.id, d)
+}
+
+function onTimeUpdate(): void {
+  const video = videoRef.value
+  if (!video) return
+  emit('video-time', props.shot.id, video.currentTime)
+}
 </script>
 
 <template>
@@ -88,13 +130,20 @@ const kenBurnsStyle = computed(() => ({
     </template>
     <video
       v-else
+      ref="videoRef"
       :key="shot.id"
       :src="resolvedUrl"
       controls
       muted
-      :autoplay="playing"
-      class="h-full w-full object-cover"
+      playsinline
+      class="h-full w-full object-contain"
       data-test="shot-video"
+      @loadedmetadata="reportDuration"
+      @durationchange="reportDuration"
+      @timeupdate="onTimeUpdate"
+      @ended="emit('video-ended', shot.id)"
+      @play="emit('video-play', shot.id)"
+      @pause="emit('video-pause', shot.id)"
     />
     <span
       v-if="subtitle"

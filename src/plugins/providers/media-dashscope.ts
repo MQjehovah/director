@@ -158,12 +158,17 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
     throw new Error('DashScope 媒体当前仅支持文生图（text2image）。')
   }
 
+  async function editImage(): Promise<Job> {
+    throw new Error('DashScope 媒体当前仅支持文生图（text2image），图生图请使用 ComfyUI 媒体。')
+  }
+
   return {
     id: MEDIA_DASHSCOPE_ID,
     name: 'DashScope 文生图',
     capabilities: ['text2image'],
     generateImage,
     generateVideo,
+    editImage,
     getJob: ctrl.getJob,
     cancelJob: ctrl.cancelJob,
     onJobUpdate: ctrl.onJobUpdate,

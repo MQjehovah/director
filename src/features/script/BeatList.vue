@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useCharacterStore } from '../../stores/characterStore'
 import { useScriptStore } from '../../stores/scriptStore'
 import { useScriptFeatures } from './useScriptFeatures'
 import { Badge, Button, Input, Select, Textarea } from '../../components/ui'
@@ -9,10 +10,14 @@ import type { Beat } from '../../core/models'
 const props = defineProps<{ sceneId: string }>()
 
 const store = useScriptStore()
+const characterStore = useCharacterStore()
 const features = useScriptFeatures()
 
 const scene = computed(() => store.scenes.find((s) => s.id === props.sceneId))
 const beats = computed<Beat[]>(() => scene.value?.beats ?? [])
+const characterNames = computed<string[]>(() => [
+  ...new Set(characterStore.characters.map((c) => c.name).filter(Boolean)),
+])
 
 const beatTypes: SelectOption[] = [
   { value: 'dialogue', label: '对话' },
@@ -162,8 +167,8 @@ async function onRewrite(beat: Beat): Promise<void> {
         class="flex flex-col gap-2 rounded-lg border border-edge bg-raised p-3"
         data-test="beat-item"
       >
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex min-w-0 items-center gap-2">
             <Select
               :model-value="beat.type"
               :options="beatTypes"
@@ -171,7 +176,7 @@ async function onRewrite(beat: Beat): Promise<void> {
               data-test="beat-type-select"
               @update:model-value="setBeatType(beat.id, $event)"
             />
-            <Badge :variant="typeBadgeVariant[beat.type]" data-test="beat-type">
+            <Badge :variant="typeBadgeVariant[beat.type]" class="shrink-0" data-test="beat-type">
               {{ typeLabel[beat.type] }}
             </Badge>
           </div>
@@ -201,9 +206,10 @@ async function onRewrite(beat: Beat): Promise<void> {
           <div class="flex gap-2">
             <Input
               :model-value="beat.dialogue?.speaker ?? ''"
-              placeholder="角色名"
+              placeholder="选择或输入角色"
               data-test="beat-speaker"
-              class="w-36 shrink-0"
+              list="beat-character-names"
+              class="w-28 shrink-0"
               @update:model-value="setDialogueSpeaker(beat.id, $event)"
             />
             <Input
@@ -257,6 +263,10 @@ async function onRewrite(beat: Beat): Promise<void> {
         </div>
       </li>
     </ul>
+
+    <datalist id="beat-character-names">
+      <option v-for="name in characterNames" :key="name" :value="name" />
+    </datalist>
 
     <Button
       variant="outline"

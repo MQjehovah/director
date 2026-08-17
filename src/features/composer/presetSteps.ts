@@ -24,6 +24,11 @@ export interface PortraitStepResult {
   jobIds: string[]
 }
 
+export interface SceneArtStepResult {
+  sceneCount: number
+  jobIds: string[]
+}
+
 export interface RenderStepResult {
   renderCount: number
   jobIds: string[]
@@ -86,7 +91,7 @@ export function cutStep(): PipelineStep<CutStepResult> {
         const beatIds = new Set(scene.beats.map((b) => b.id))
         const hasShots = storyboardStore.shots.some((s) => s.beatRef && beatIds.has(s.beatRef))
         if (hasShots) continue
-        const shots = features.cutSceneToShots(scene.id)
+        const shots = await features.cutSceneToShots(scene.id)
         shotIds.push(...shots.map((s) => s.id))
       }
       return { shotCount: shotIds.length, shotIds }
@@ -121,6 +126,42 @@ export function portraitStep(): PipelineStep<PortraitStepResult> {
         }
       }
       return { portraitCount: jobIds.length, jobIds }
+    },
+  }
+}
+
+export function sceneArtStep(): PipelineStep<SceneArtStepResult> {
+  return {
+    id: 'scene-art',
+    title: '生成场景图',
+    enabled: true,
+    async run(ctx) {
+      const scriptStore = useScriptStore()
+      if (scriptStore.scenes.length === 0) {
+        return { sceneCount: 0, jobIds: [] }
+      }
+      const pluginStore = usePluginStore()
+      if (!pluginStore.mediaProvider) {
+        ctx.fail('scene-art', '未配置媒体 Provider，无法生成场景图。')
+        return
+      }
+      const features = useScriptFeatures()
+      const jobIds: string[] = []
+      let sceneCount = 0
+      for (const scene of scriptStore.scenes) {
+        if (scene.sceneImage) continue
+        try {
+          const job = await features.generateSceneImage(scene.id)
+          if (job) {
+            sceneCount += 1
+            jobIds.push(job.id)
+          }
+        } catch (err) {
+          ctx.fail('scene-art', err instanceof Error ? err.message : String(err))
+          return
+        }
+      }
+      return { sceneCount, jobIds }
     },
   }
 }
@@ -217,5 +258,13 @@ export function assembleStep(): PipelineStep<AssembleStepResult> {  return {
 }
 
 export function presetPipeline(): PipelineStep[] {
-  return [scriptStep(), cutStep(), portraitStep(), renderStep(), voiceStep(), assembleStep()]
+  return [
+    scriptStep(),
+    cutStep(),
+    sceneArtStep(),
+    portraitStep(),
+    renderStep(),
+    voiceStep(),
+    assembleStep(),
+  ]
 }

@@ -1,4 +1,5 @@
 import type { Job } from '../../core/models'
+import type { ImageEditParams } from './image-edit'
 import type { ImageToVideoCapability } from './image-to-video'
 import type { TextToImageCapability } from './text-to-image'
 import type { TextToVideoCapability } from './text-to-video'
@@ -11,6 +12,7 @@ import type { TextToVideoCapability } from './text-to-video'
 export type MediaCapabilityProvider = TextToImageCapability &
   ImageToVideoCapability &
   TextToVideoCapability & {
+    editImage(params: ImageEditParams): Promise<Job>
     getJob(id: string): Promise<Job>
     onJobUpdate(cb: (job: Job) => void): () => void
     cancelJob(id: string): Promise<Job>
