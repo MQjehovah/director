@@ -9,6 +9,7 @@ import type {
 } from '../../providers/MediaProvider'
 import { createJobController } from '../../providers/capabilities'
 import { loadProviderConfig } from '../../features/settings/httpBackendConfig'
+import { getWorkflowTemplate } from '../../features/comfyui/workflowStore'
 
 export const MEDIA_COMFYUI_ID = 'media-comfyui'
 
@@ -71,14 +72,17 @@ interface ComfyHistory {
   }
 }
 
-function readConfig(): { baseUrl: string; workflow: string } {
+function readConfig(): { baseUrl: string; workflowTemplateId?: string } {
   const config = loadProviderConfig(MEDIA_COMFYUI_ID) ?? {}
   const baseUrl = String(config.baseUrl ?? '').replace(/\/+$/, '')
-  const workflow = String(config.workflow ?? '').trim() || DEFAULT_TXT2IMG_WORKFLOW
   if (!baseUrl) {
     throw new Error('ComfyUI 未配置：请在「设置 → ComfyUI 媒体」填写地址（Base URL）。')
   }
-  return { baseUrl, workflow }
+  const workflowTemplateId =
+    typeof config.workflowTemplateId === 'string' && config.workflowTemplateId.trim() !== ''
+      ? config.workflowTemplateId.trim()
+      : undefined
+  return { baseUrl, workflowTemplateId }
 }
 
 /** 把占位符注入工作流图（避免文本里含引号破坏 JSON） */
@@ -99,6 +103,58 @@ function injectPlaceholders(
       else if (value === '{negative_prompt}') node.inputs[key] = negativePrompt ?? ''
       else if (value === '{seed}') node.inputs[key] = seed
     }
+  }
+  return graph
+}
+
+interface TemplateNodeIds {
+  promptNodeId?: string
+  negativeNodeId?: string
+  seedNodeId?: string
+}
+
+/** 按节点 id 注入 prompt/negative/seed；缺失 prompt 节点时回退到占位符扫描或首个 CLIPTextEncode */
+function injectIntoNodes(
+  graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+  prompt: string,
+  negativePrompt: string | undefined,
+  seed: number,
+  ids: TemplateNodeIds,
+): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
+  let promptNodeId = ids.promptNodeId
+  if (!promptNodeId) {
+    let placeholderFound = false
+    for (const node of Object.values(graph)) {
+      for (const key of Object.keys(node.inputs)) {
+        const value = node.inputs[key]
+        if (value === '{prompt}') {
+          node.inputs[key] = prompt
+          placeholderFound = true
+        } else if (value === '{negative_prompt}') {
+          node.inputs[key] = negativePrompt ?? ''
+        } else if (value === '{seed}') {
+          node.inputs[key] = seed
+        }
+      }
+    }
+    if (!placeholderFound) {
+      promptNodeId = Object.keys(graph).find((id) =>
+        graph[id].class_type.includes('CLIPTextEncode'),
+      )
+    }
+  }
+
+  if (promptNodeId && graph[promptNodeId]) {
+    graph[promptNodeId].inputs.text = prompt
+  } else {
+    throw new Error('工作流缺少提示词节点，请重新导入模板或检查模板。')
+  }
+
+  if (ids.negativeNodeId && graph[ids.negativeNodeId]) {
+    graph[ids.negativeNodeId].inputs.text = negativePrompt ?? ''
+  }
+  if (ids.seedNodeId && graph[ids.seedNodeId]) {
+    graph[ids.seedNodeId].inputs.seed = seed
   }
   return graph
 }
@@ -199,9 +255,26 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
   }
 
   async function generateImage(params: TextToImageParams): Promise<Job> {
-    const { baseUrl, workflow } = readConfig()
+    const { baseUrl, workflowTemplateId } = readConfig()
     const seed = params.seed ?? Math.floor(Math.random() * 1e9)
-    const graph = injectPlaceholders(workflow, params.prompt, params.negativePrompt, seed)
+    let graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>
+    if (workflowTemplateId) {
+      const template = getWorkflowTemplate(workflowTemplateId)
+      if (!template) {
+        throw new Error('ComfyUI 工作流模板不存在，请在「设置」中重新选择或导入模板。')
+      }
+      graph = JSON.parse(template.graphJson) as Record<
+        string,
+        { class_type: string; inputs: Record<string, unknown> }
+      >
+      graph = injectIntoNodes(graph, params.prompt, params.negativePrompt, seed, {
+        promptNodeId: template.promptNodeId,
+        negativeNodeId: template.negativeNodeId,
+        seedNodeId: template.seedNodeId,
+      })
+    } else {
+      graph = injectPlaceholders(DEFAULT_TXT2IMG_WORKFLOW, params.prompt, params.negativePrompt, seed)
+    }
     const res = await fetch(`${baseUrl}/prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -254,9 +327,10 @@ export function createMediaComfyUIPlugin(opts?: MediaComfyUIOptions): ProviderPl
     kind: 'provider',
     providerType: 'media',
     enabled: true,
-    description: '调用本地 ComfyUI 工作流生成图片。填写地址与工作流模板（API 格式）后设为当前使用。',
+    description:
+      '调用本地 ComfyUI 工作流生成图片。可在「设置 → ComfyUI 工作流模板」导入并管理 API 格式模板，选择模板后自动注入提示词与 seed。',
     capabilities: instance.capabilities,
-    configFields: ['baseUrl', 'workflow'],
+    configFields: ['baseUrl', 'workflowTemplateId'],
     instance,
   }
 }

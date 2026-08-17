@@ -4,6 +4,7 @@ import { Badge } from '../../components/ui'
 import { usePluginStore } from '../../stores/pluginStore'
 import type { ProviderPlugin, ProviderType } from '../../core/plugin/types'
 import ProviderConfig from './ProviderConfig.vue'
+import WorkflowTemplateManager from './WorkflowTemplateManager.vue'
 
 const store = usePluginStore()
 
@@ -59,5 +60,7 @@ const enabledSummary = computed<ProviderType[]>(() => {
         </p>
       </div>
     </section>
+
+    <WorkflowTemplateManager />
   </div>
 </template>

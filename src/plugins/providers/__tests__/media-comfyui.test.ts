@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { createMediaComfyUIProvider, MEDIA_COMFYUI_ID, DEFAULT_TXT2IMG_WORKFLOW } from '../media-comfyui'
 import { saveProviderConfig, clearProviderConfig } from '../../../features/settings/httpBackendConfig'
+import { saveWorkflowTemplate } from '../../../features/comfyui/workflowStore'
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -129,6 +130,68 @@ describe('media-comfyui provider', () => {
     const before = vi.mocked(fetch).mock.calls.length
     await vi.advanceTimersByTimeAsync(50)
     expect(vi.mocked(fetch).mock.calls.length).toBe(before)
+  })
+
+  it('injects prompt/negative/seed into template nodes when a template is selected', async () => {
+    const graphJson = JSON.stringify({
+      '3': {
+        class_type: 'KSampler',
+        inputs: { seed: 42, steps: 20, model: ['4', 0], positive: ['6', 0], negative: ['7', 0] },
+      },
+      '6': { class_type: 'CLIPTextEncode', inputs: { text: 'placeholder-a', clip: ['4', 1] } },
+      '7': { class_type: 'CLIPTextEncode', inputs: { text: 'placeholder-b', clip: ['4', 1] } },
+    })
+    saveWorkflowTemplate({
+      id: 'tpl1',
+      name: '节点模板',
+      graphJson,
+      promptNodeId: '6',
+      negativeNodeId: '7',
+      seedNodeId: '3',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl1',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'p6' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '一只猫', negativePrompt: '模糊', seed: 777 })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<string, { inputs: Record<string, unknown> }>
+    expect(graph['6'].inputs.text).toBe('一只猫')
+    expect(graph['7'].inputs.text).toBe('模糊')
+    expect(graph['3'].inputs.seed).toBe(777)
+    expect(JSON.stringify(graph)).not.toContain('{prompt}')
+  })
+
+  it('throws a clear error when the template has no prompt node and no placeholders', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl2',
+      name: '无提示词',
+      graphJson: JSON.stringify({
+        '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'model.safetensors' } },
+        '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'ai-director', images: ['8', 0] } },
+      }),
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl2',
+    })
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await expect(p.generateImage({ prompt: 'x' })).rejects.toThrow('工作流缺少提示词节点')
+  })
+
+  it('throws a clear error when the selected template does not exist', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'missing-template',
+    })
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await expect(p.generateImage({ prompt: 'x' })).rejects.toThrow('模板不存在')
   })
 
   it('does not let an in-flight poll overwrite a canceled job with done', async () => {

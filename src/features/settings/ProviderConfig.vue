@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Badge, Button, Input, Switch, Textarea } from '../../components/ui'
+import { Badge, Button, Input, Select, Switch, Textarea } from '../../components/ui'
+import type { SelectOption } from '../../components/ui'
 import { usePluginStore } from '../../stores/pluginStore'
 import type { ProviderConfigField, ProviderPlugin } from '../../core/plugin/types'
 import { loadProviderConfig, saveProviderConfig } from './httpBackendConfig'
 import type { ProviderConfig } from './httpBackendConfig'
+import { listWorkflowTemplates } from '../comfyui/workflowStore'
 
 const props = defineProps<{
   provider: ProviderPlugin
@@ -56,7 +58,13 @@ const typeVariant = computed<'neutral' | 'success' | 'warning' | 'danger' | 'inf
 
 const FIELD_META: Record<
   ProviderConfigField,
-  { label: string; placeholder: string; type?: 'text' | 'password'; multiline?: boolean }
+  {
+    label: string
+    placeholder: string
+    type?: 'text' | 'password'
+    multiline?: boolean
+    templateSelect?: boolean
+  }
 > = {
   baseUrl: { label: '地址 Base URL', placeholder: 'http://127.0.0.1:8188' },
   apiKey: { label: 'Token / 密钥', placeholder: 'sk-...', type: 'password' },
@@ -66,9 +74,19 @@ const FIELD_META: Record<
     placeholder: '包含 {prompt} / {negative_prompt} / {seed} 占位符的工作流 JSON',
     multiline: true,
   },
+  workflowTemplateId: {
+    label: '工作流模板',
+    placeholder: '选择已保存的 ComfyUI 工作流模板',
+    templateSelect: true,
+  },
 }
 
 const fields = computed<ProviderConfigField[]>(() => props.provider.configFields ?? [])
+
+const templateOptions = computed<SelectOption[]>(() => [
+  { value: '', label: '默认内置模板' },
+  ...listWorkflowTemplates().map((t) => ({ value: t.id, label: t.name })),
+])
 
 function fieldTestKey(field: ProviderConfigField): string {
   return `config-${field.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`
@@ -128,8 +146,15 @@ function setActive(): void {
         :class="FIELD_META[field].multiline ? 'sm:col-span-3' : ''"
       >
         <span class="mb-1 block text-xs text-ink-muted">{{ FIELD_META[field].label }}</span>
+        <Select
+          v-if="FIELD_META[field].templateSelect"
+          :model-value="String(config[field] ?? '')"
+          :options="templateOptions"
+          :data-test="fieldTestKey(field)"
+          @update:model-value="config[field] = $event"
+        />
         <Textarea
-          v-if="FIELD_META[field].multiline"
+          v-else-if="FIELD_META[field].multiline"
           :model-value="String(config[field] ?? '')"
           :rows="8"
           :placeholder="FIELD_META[field].placeholder"

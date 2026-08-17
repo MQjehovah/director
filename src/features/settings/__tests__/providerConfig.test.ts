@@ -18,6 +18,7 @@ import {
   createStorageIndexedDBPlugin,
   createTTSSyncPlugin,
 } from '../../../plugins/providers'
+import { saveWorkflowTemplate } from '../../../features/comfyui/workflowStore'
 
 const STORAGE_PREFIX = 'ai-director:provider:'
 
@@ -151,6 +152,21 @@ describe('provider config', () => {
       apiKey: 'sk-test',
       model: 'flux',
     })
+  })
+
+  it('renders workflowTemplateId as a select of saved templates', async () => {
+    saveWorkflowTemplate({ id: 'tpl-a', name: '我的模板', graphJson: '{}' })
+    const provider: ProviderPlugin = {
+      ...makeProvider(),
+      configFields: ['baseUrl', 'workflowTemplateId'],
+    }
+    initStore(provider)
+    const w = mount(ProviderConfig, { props: { provider } })
+    const select = w.get('[data-test="config-workflow-template-id"]')
+    expect(select.element.tagName).toBe('SELECT')
+    const optionLabels = select.findAll('option').map((o) => o.text())
+    expect(optionLabels).toContain('默认内置模板')
+    expect(optionLabels).toContain('我的模板')
   })
 
   it('renders only the declared config fields', async () => {
