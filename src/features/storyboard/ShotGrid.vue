@@ -49,7 +49,7 @@ function thumbIsVideo(assetId: string | undefined): boolean {
   const url = thumbUrlOf(assetId)
   if (!url) return false
   if (url.startsWith('data:video') || url.startsWith('blob:video')) return true
-  if (url.startsWith('http')) return /\.(mp4|m4v|webm|mov)(\?|#|$)/i.test(url)
+  if (url.startsWith('http')) return /\.(mp4|m4v|webm|mov)([?#&]|$)/i.test(url)
   return false
 }
 
