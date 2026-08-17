@@ -5,7 +5,10 @@ import { Button } from '../../components/ui'
 import JobItem from './JobItem.vue'
 import type { Job } from '../../core/models'
 
-defineProps<{ open?: boolean }>()
+defineProps<{
+  open?: boolean
+  inline?: boolean
+}>()
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -39,15 +42,25 @@ const summarySegments = computed<string[]>(() => {
 </script>
 
 <template>
-  <div v-if="open" data-test="jobs-drawer" class="fixed inset-0 z-50 flex justify-end">
+  <div
+    v-if="open"
+    data-test="jobs-drawer"
+    :class="inline ? 'flex h-full flex-col bg-panel' : 'fixed inset-0 z-50 flex justify-end'"
+  >
     <div
+      v-if="!inline"
       class="absolute inset-0 bg-black/50"
       data-test="drawer-backdrop"
       aria-hidden="true"
       @click="emit('close')"
     />
     <aside
-      class="relative flex h-full w-80 max-w-full flex-col border-l border-edge bg-panel shadow-2xl"
+      :class="[
+        'relative flex flex-col bg-panel',
+        inline
+          ? 'min-h-0 flex-1 border border-edge'
+          : 'h-full w-80 max-w-full border-l border-edge shadow-2xl',
+      ]"
     >
       <header class="flex shrink-0 items-center justify-between gap-2 border-b border-edge px-4 py-3">
         <div>

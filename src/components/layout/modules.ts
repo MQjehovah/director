@@ -1,4 +1,11 @@
-export type ModuleKey = 'characters' | 'script' | 'storyboard' | 'film' | 'tasks' | 'pipeline'
+export type ModuleKey =
+  | 'characters'
+  | 'script'
+  | 'storyboard'
+  | 'film'
+  | 'tasks'
+  | 'pipeline'
+  | 'settings'
 
 export interface ModuleDef {
   key: ModuleKey
@@ -13,6 +20,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'film', label: '成片', title: '成片合成' },
   { key: 'tasks', label: '任务', title: '任务中心' },
   { key: 'pipeline', label: '全流程', title: '全流程' },
+  { key: 'settings', label: '设置', title: '设置' },
 ]
 
 export function moduleTitle(key: string): string {
