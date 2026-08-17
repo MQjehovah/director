@@ -1,0 +1,264 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useCharacterStore } from '../../stores/characterStore'
+import { useCharacterFeatures } from './useCharacterFeatures'
+import { Button, Input, Textarea } from '../../components/ui'
+import type { Character } from '../../core/models'
+
+const props = defineProps<{ characterId: string }>()
+
+const emit = defineEmits<{
+  (e: 'close'): void
+}>()
+
+const store = useCharacterStore()
+const features = useCharacterFeatures()
+
+const character = computed(() => store.getCharacter(props.characterId))
+
+const seedIdea = ref('')
+const imagePrompt = ref((character.value?.metadata.imagePrompt as string | undefined) ?? '')
+const message = ref('')
+const busy = ref(false)
+
+const tagsText = computed({
+  get: () => character.value?.tags.join(', ') ?? '',
+  set: (value: string) => {
+    if (!character.value) return
+    const tags = value
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+    store.updateCharacter(character.value.id, { tags })
+  },
+})
+
+function setField(patch: Partial<Omit<Character, 'id'>>): void {
+  if (!character.value) return
+  store.updateCharacter(character.value.id, patch)
+}
+
+function setLoraName(value: string): void {
+  if (!character.value) return
+  store.updateCharacter(character.value.id, {
+    loraConfig: { ...(character.value.loraConfig ?? {}), name: value },
+  })
+}
+
+function setLoraWeight(value: string): void {
+  if (!character.value) return
+  const weight = Number(value)
+  store.updateCharacter(character.value.id, {
+    loraConfig: { ...(character.value.loraConfig ?? {}), weight: Number.isFinite(weight) ? weight : 0 },
+  })
+}
+
+function isImageSrc(value: string): boolean {
+  return value.startsWith('data:') || value.startsWith('http') || value.startsWith('/')
+}
+
+async function onGenerateDescription(): Promise<void> {
+  message.value = ''
+  if (!character.value) return
+  const idea = seedIdea.value.trim()
+  if (!idea) {
+    message.value = '请先填写灵感关键词。'
+    return
+  }
+  busy.value = true
+  try {
+    const res = await features.generateCharacterDescription(idea)
+    if (res.ok) setField({ appearance: res.text })
+    else message.value = res.error
+  } finally {
+    busy.value = false
+  }
+}
+
+async function onExpandPrompt(): Promise<void> {
+  message.value = ''
+  const c = character.value
+  if (!c) return
+  const base = c.appearance?.trim()
+  if (!base) {
+    message.value = '请先填写外貌描述，再扩写参考图提示词。'
+    return
+  }
+  busy.value = true
+  try {
+    const res = await features.expandReferencePrompt(base)
+    if (res.ok) {
+      imagePrompt.value = res.text
+      setField({ metadata: { ...(c.metadata ?? {}), imagePrompt: res.text } })
+    } else {
+      message.value = res.error
+    }
+  } finally {
+    busy.value = false
+  }
+}
+
+async function onGeneratePortrait(): Promise<void> {
+  message.value = ''
+  const c = character.value
+  if (!c) return
+  busy.value = true
+  try {
+    const job = await features.generatePortrait(c.id)
+    message.value = job ? `立绘生成任务已创建（${job.id}）。` : '未配置媒体 Provider，无法生成立绘。'
+  } finally {
+    busy.value = false
+  }
+}
+</script>
+
+<template>
+  <aside
+    v-if="character"
+    class="flex w-96 shrink-0 flex-col overflow-y-auto border-l border-edge bg-panel"
+  >
+    <header class="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
+      <h2 class="text-sm font-semibold text-ink">角色详情</h2>
+      <button
+        type="button"
+        aria-label="关闭"
+        data-test="editor-close"
+        class="rounded-md p-1 text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink"
+        @click="emit('close')"
+      >
+        ✕
+      </button>
+    </header>
+
+    <div class="flex flex-col gap-4 p-4">
+      <label class="block text-xs font-medium text-ink-muted">
+        姓名
+        <Input
+          class="mt-1"
+          :model-value="character.name"
+          data-test="name"
+          @update:model-value="setField({ name: $event })"
+        />
+      </label>
+
+      <label class="block text-xs font-medium text-ink-muted">
+        外貌描述
+        <Textarea
+          class="mt-1"
+          :model-value="character.appearance ?? ''"
+          :rows="5"
+          placeholder="角色的外貌、穿着、气质等"
+          data-test="appearance"
+          @update:model-value="setField({ appearance: $event })"
+        />
+      </label>
+
+      <label class="block text-xs font-medium text-ink-muted">
+        音色
+        <Input
+          class="mt-1"
+          :model-value="character.voice ?? ''"
+          placeholder="例如 zh-female"
+          data-test="voice"
+          @update:model-value="setField({ voice: $event || undefined })"
+        />
+      </label>
+
+      <div class="flex flex-col gap-2">
+        <span class="text-xs font-medium text-ink-muted">LoRA</span>
+        <div class="grid grid-cols-2 gap-2">
+          <Input
+            :model-value="String(character.loraConfig?.name ?? '')"
+            placeholder="LoRA 名称"
+            data-test="lora-name"
+            @update:model-value="setLoraName"
+          />
+          <Input
+            :model-value="String(character.loraConfig?.weight ?? 0)"
+            placeholder="权重"
+            data-test="lora-weight"
+            @update:model-value="setLoraWeight"
+          />
+        </div>
+      </div>
+
+      <label class="block text-xs font-medium text-ink-muted">
+        标签（逗号分隔）
+        <Input
+          class="mt-1"
+          v-model="tagsText"
+          placeholder="主角, 少年"
+          data-test="tags"
+        />
+      </label>
+
+      <div class="flex flex-col gap-2">
+        <span class="text-xs font-medium text-ink-muted">参考图</span>
+        <div v-if="character.referenceImages.length > 0" class="flex flex-wrap gap-2">
+          <template v-for="r in character.referenceImages" :key="r">
+            <img
+              v-if="isImageSrc(r)"
+              :src="r"
+              class="h-20 w-20 rounded-md border border-edge bg-zinc-800 object-cover"
+              alt="参考图"
+            />
+            <div
+              v-else
+              class="flex h-20 w-20 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
+            >
+              图 {{ r }}
+            </div>
+          </template>
+        </div>
+        <p v-else class="text-xs text-ink-muted">暂无参考图，可通过「生成立绘」生成。</p>
+      </div>
+
+      <div class="flex flex-col gap-2 rounded-md border border-edge bg-raised p-3">
+        <span class="text-xs font-semibold text-ink">AI 辅助</span>
+
+        <div class="flex gap-2">
+          <Input v-model="seedIdea" placeholder="灵感关键词" data-test="seed-idea" />
+          <Button
+            variant="primary"
+            size="sm"
+            class="shrink-0"
+            data-test="ai-describe"
+            :disabled="busy"
+            @click="onGenerateDescription"
+          >
+            生成设定
+          </Button>
+        </div>
+
+        <Textarea
+          v-model="imagePrompt"
+          :rows="3"
+          placeholder="参考图提示词（可编辑）"
+          data-test="image-prompt"
+        />
+        <div class="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            data-test="ai-expand"
+            :disabled="busy"
+            @click="onExpandPrompt"
+          >
+            AI 扩写
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            data-test="gen-portrait"
+            :disabled="busy"
+            @click="onGeneratePortrait"
+          >
+            生成立绘
+          </Button>
+        </div>
+
+        <p v-if="message" class="text-xs text-amber-300" data-test="message">{{ message }}</p>
+      </div>
+    </div>
+  </aside>
+</template>
