@@ -325,10 +325,16 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     const params = new URLSearchParams({ filename: image.filename })
     if (image.subfolder) params.set('subfolder', image.subfolder)
     if (image.type) params.set('type', image.type)
-    const res = await fetch(`${baseUrl}/view?${params.toString()}`)
+    const viewUrl = `${baseUrl}/view?${params.toString()}`
+    const mime = mimeFor(image.filename)
+    // 视频走 /view 直链（避免大文件 base64 内嵌导致卡死/失败）；
+    // 图片仍转 data URL 内嵌，便于离线/引用。
+    if (mime.startsWith('video/')) {
+      return { url: viewUrl, mime }
+    }
+    const res = await fetch(viewUrl)
     if (!res.ok) throw new Error(`ComfyUI 取图失败（${res.status}）`)
     const buf = new Uint8Array(await res.arrayBuffer())
-    const mime = mimeFor(image.filename)
     return { url: bytesToDataUrl(buf, mime), mime }
   }
 

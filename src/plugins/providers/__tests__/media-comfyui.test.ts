@@ -492,7 +492,8 @@ describe('media-comfyui provider', () => {
     expect(done.status).toBe('done')
     const asset = await p.getAsset(done.result!.assetIds![0])
     expect(asset?.kind).toBe('video')
-    expect(asset?.url).toContain('data:video/mp4;base64,')
+    expect(asset?.url).toContain('/view?')
+    expect(asset?.url).toContain('MiniMax_H3_00001_.mp4')
   })
 
   it('injects prompt into custom nodes (MiniMax style) and seed into noise_seed', async () => {

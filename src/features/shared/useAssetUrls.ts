@@ -45,12 +45,15 @@ export function useAssetUrls() {
           return url
         }
       }
-      const media = pluginStore.mediaProvider as AssetResolvingMedia | undefined
-      if (media?.getAsset) {
-        const asset = await media.getAsset(idOrUrl)
-        if (asset?.url) {
-          urlCache[idOrUrl] = asset.url
-          return asset.url
+      // 遍历所有启用的媒体 Provider，用各自 getAsset 解析（生成可能走任一 Provider）
+      for (const provider of pluginStore.enabledProviders('media')) {
+        const instance = provider.instance as AssetResolvingMedia | undefined
+        if (instance?.getAsset) {
+          const asset = await instance.getAsset(idOrUrl)
+          if (asset?.url) {
+            urlCache[idOrUrl] = asset.url
+            return asset.url
+          }
         }
       }
       return undefined

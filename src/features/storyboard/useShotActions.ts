@@ -181,13 +181,22 @@ export function useShotActions() {
       thumbUrls.value[assetId] = assetId
       return assetId
     }
-    const media = pluginStore.mediaProvider as AssetResolvingMediaProvider | undefined
-    if (!media?.getAsset || resolving.has(assetId)) return undefined
+    if (resolving.has(assetId)) return undefined
     resolving.add(assetId)
     try {
-      const asset = await media.getAsset(assetId)
-      if (asset?.url) thumbUrls.value[assetId] = asset.url
-      return asset?.url
+      // 遍历所有启用的媒体 Provider：生成可能走任一 Provider（如 ComfyUI），
+      // 资产由持有它的 Provider 解析
+      for (const provider of pluginStore.enabledProviders('media')) {
+        const instance = provider.instance as AssetResolvingMediaProvider | undefined
+        if (instance?.getAsset) {
+          const asset = await instance.getAsset(assetId)
+          if (asset?.url) {
+            thumbUrls.value[assetId] = asset.url
+            return asset.url
+          }
+        }
+      }
+      return undefined
     } catch {
       return undefined
     } finally {

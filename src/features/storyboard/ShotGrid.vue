@@ -47,7 +47,10 @@ function thumbUrlOf(assetId: string | undefined): string | undefined {
 
 function thumbIsVideo(assetId: string | undefined): boolean {
   const url = thumbUrlOf(assetId)
-  return !!url && (url.startsWith('data:video') || url.startsWith('blob:video'))
+  if (!url) return false
+  if (url.startsWith('data:video') || url.startsWith('blob:video')) return true
+  if (url.startsWith('http')) return /\.(mp4|m4v|webm|mov)(\?|#|$)/i.test(url)
+  return false
 }
 
 function activeJobOf(shotId: string): Job | undefined {
