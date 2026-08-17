@@ -20,10 +20,10 @@ const beatTypes: SelectOption[] = [
   { value: 'sfx', label: '音效' },
 ]
 
-const newType = ref<Beat['type']>('dialogue')
-const rewriteInstruction = ref('')
 const busy = ref(false)
-const message = ref('')
+const rewritingBeatId = ref<string | null>(null)
+const rewriteInstructions = ref<Record<string, string>>({})
+const message = ref<{ beatId: string; text: string } | null>(null)
 
 const typeLabel: Record<Beat['type'], string> = {
   shot: '镜头',
@@ -40,11 +40,10 @@ const typeBadgeVariant: Record<Beat['type'], 'neutral' | 'info' | 'warning' | 's
 }
 
 function addBeat(): void {
-  if (newType.value === 'dialogue') {
-    store.addBeat(props.sceneId, { type: 'dialogue', dialogue: { speaker: '角色', text: '' } })
-  } else {
-    store.addBeat(props.sceneId, { type: newType.value, action: '' })
-  }
+  store.addBeat(props.sceneId, {
+    type: 'dialogue',
+    dialogue: { speaker: '角色', text: '' },
+  })
 }
 
 function removeBeat(beatId: string): void {
@@ -53,6 +52,25 @@ function removeBeat(beatId: string): void {
 
 function beatById(beatId: string): Beat | undefined {
   return beats.value.find((b) => b.id === beatId)
+}
+
+function setBeatType(beatId: string, value: string): void {
+  const beat = beatById(beatId)
+  if (!beat) return
+  const type = value as Beat['type']
+  if (type === 'dialogue') {
+    store.updateBeat(props.sceneId, beatId, {
+      type: 'dialogue',
+      dialogue: { speaker: beat.dialogue?.speaker ?? '角色', text: beat.dialogue?.text ?? beat.action ?? '' },
+      action: undefined,
+    })
+  } else {
+    store.updateBeat(props.sceneId, beatId, {
+      type,
+      action: beat.action ?? beat.dialogue?.text ?? '',
+      dialogue: undefined,
+    })
+  }
 }
 
 function setDialogueSpeaker(beatId: string, speaker: string): void {
@@ -71,6 +89,11 @@ function setDialogueText(beatId: string, text: string): void {
 
 function setAction(beatId: string, action: string): void {
   store.updateBeat(props.sceneId, beatId, { action })
+}
+
+function toggleRewrite(beatId: string): void {
+  rewritingBeatId.value = rewritingBeatId.value === beatId ? null : beatId
+  message.value = null
 }
 
 function parseRewritten(text: string): { type: Beat['type']; dialogue?: { speaker: string; text: string }; action?: string } | null {
@@ -92,22 +115,22 @@ function parseRewritten(text: string): { type: Beat['type']; dialogue?: { speake
 }
 
 async function onRewrite(beat: Beat): Promise<void> {
-  message.value = ''
-  const instruction = rewriteInstruction.value.trim()
+  message.value = null
+  const instruction = (rewriteInstructions.value[beat.id] ?? '').trim()
   if (!instruction) {
-    message.value = '请先填写改写指令。'
+    message.value = { beatId: beat.id, text: '请先填写改写指令。' }
     return
   }
   busy.value = true
   try {
     const res = await features.rewriteBeat(props.sceneId, beat.id, instruction)
     if (!res.ok) {
-      message.value = res.error
+      message.value = { beatId: beat.id, text: res.error }
       return
     }
     const parsed = parseRewritten(res.text)
     if (!parsed) {
-      message.value = '改写结果无法解析。'
+      message.value = { beatId: beat.id, text: '改写结果无法解析。' }
       return
     }
     if (parsed.type === 'dialogue') {
@@ -115,6 +138,9 @@ async function onRewrite(beat: Beat): Promise<void> {
     } else {
       store.updateBeat(props.sceneId, beat.id, { type: parsed.type, action: parsed.action, dialogue: undefined })
     }
+    message.value = { beatId: beat.id, text: '改写已应用。' }
+    rewritingBeatId.value = null
+    rewriteInstructions.value[beat.id] = ''
   } finally {
     busy.value = false
   }
@@ -123,12 +149,10 @@ async function onRewrite(beat: Beat): Promise<void> {
 
 <template>
   <div class="flex flex-col gap-3">
-    <div class="flex items-center justify-between">
-      <h3 class="text-sm font-semibold text-ink">叙事节拍</h3>
-    </div>
+    <h3 class="text-sm font-semibold text-ink">叙事节拍</h3>
 
     <p v-if="beats.length === 0" class="text-sm text-ink-muted" data-test="beats-empty">
-      暂无节拍，可添加节拍或使用 AI 生成。
+      暂无节拍，点击「添加节拍」创建。
     </p>
 
     <ul v-else class="flex flex-col gap-2">
@@ -140,12 +164,16 @@ async function onRewrite(beat: Beat): Promise<void> {
       >
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-2">
+            <Select
+              :model-value="beat.type"
+              :options="beatTypes"
+              class="w-24 shrink-0"
+              data-test="beat-type-select"
+              @update:model-value="setBeatType(beat.id, $event)"
+            />
             <Badge :variant="typeBadgeVariant[beat.type]" data-test="beat-type">
               {{ typeLabel[beat.type] }}
             </Badge>
-            <span v-if="beat.type === 'dialogue' && beat.dialogue?.speaker" class="text-xs font-medium text-ink">
-              {{ beat.dialogue.speaker }}
-            </span>
           </div>
           <div class="flex items-center gap-1">
             <button
@@ -153,9 +181,9 @@ async function onRewrite(beat: Beat): Promise<void> {
               class="rounded-md px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink"
               data-test="beat-rewrite"
               :disabled="busy"
-              @click="onRewrite(beat)"
+              @click="toggleRewrite(beat.id)"
             >
-              AI 改写
+              ✨ AI 改写
             </button>
             <button
               type="button"
@@ -195,31 +223,49 @@ async function onRewrite(beat: Beat): Promise<void> {
           data-test="beat-action"
           @update:model-value="setAction(beat.id, $event)"
         />
+
+        <div
+          v-if="rewritingBeatId === beat.id"
+          class="flex flex-col gap-2 rounded-md border border-edge bg-panel p-2"
+          data-test="rewrite-panel"
+        >
+          <div class="flex gap-2">
+            <Input
+              v-model="rewriteInstructions[beat.id]"
+              placeholder="改写指令，例如：让这句更有气势"
+              data-test="rewrite-instruction"
+              class="min-w-0 flex-1"
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              class="shrink-0"
+              :disabled="busy"
+              data-test="rewrite-apply"
+              @click="onRewrite(beat)"
+            >
+              应用
+            </Button>
+          </div>
+          <p
+            v-if="message && message.beatId === beat.id"
+            class="text-xs text-amber-300"
+            data-test="rewrite-message"
+          >
+            {{ message.text }}
+          </p>
+        </div>
       </li>
     </ul>
 
-    <div class="flex items-end gap-2 rounded-lg border border-edge bg-panel p-3">
-      <label class="block min-w-0 flex-1 text-xs font-medium text-ink-muted">
-        新节拍类型
-        <Select v-model="newType" :options="beatTypes" class="mt-1" data-test="new-type" />
-      </label>
-      <Button variant="primary" size="sm" class="shrink-0" data-test="beat-add" @click="addBeat">
-        添加节拍
-      </Button>
-    </div>
-
-    <div class="flex flex-col gap-2 rounded-lg border border-edge bg-panel p-3">
-      <span class="text-xs font-semibold text-ink">AI 改写节拍</span>
-      <div class="flex gap-2">
-        <Input
-          v-model="rewriteInstruction"
-          placeholder="改写指令，例如：让这句更有气势"
-          data-test="rewrite-instruction"
-          class="min-w-0 flex-1"
-        />
-        <p class="shrink-0 self-center text-xs text-ink-muted">点击节拍行上的「AI 改写」应用。</p>
-      </div>
-      <p v-if="message" class="text-xs text-amber-300" data-test="message">{{ message }}</p>
-    </div>
+    <Button
+      variant="outline"
+      size="sm"
+      class="self-start"
+      data-test="beat-add"
+      @click="addBeat"
+    >
+      + 添加节拍
+    </Button>
   </div>
 </template>
