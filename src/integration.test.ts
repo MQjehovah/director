@@ -74,7 +74,7 @@ describe('app shell wiring', () => {
 
     const assertions: Array<[string, string]> = [
       ['角色', 'char-add'],
-      ['剧本', 'ai-generate'],
+      ['剧本', 'ai-btn'],
       ['分镜', 'view-grid'],
       ['成片', 'player-panel'],
       ['任务', 'jobs-drawer'],

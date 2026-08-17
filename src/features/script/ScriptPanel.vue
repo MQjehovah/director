@@ -3,32 +3,35 @@ import { ref } from 'vue'
 import { useScriptStore } from '../../stores/scriptStore'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useScriptFeatures } from './useScriptFeatures'
-import { Button, Input, Textarea } from '../../components/ui'
+import { Button, Dialog, Input, Textarea } from '../../components/ui'
 import SceneEditor from './SceneEditor.vue'
 
 const store = useScriptStore()
 const features = useScriptFeatures()
 
 const selectedId = ref<string | undefined>(undefined)
+const aiOpen = ref(false)
 const idea = ref('')
 const markdown = ref('')
 const busy = ref(false)
 const message = ref('')
+const cutMessage = ref('')
 
 function selectScene(id: string): void {
   selectedId.value = id
-  message.value = ''
+  cutMessage.value = ''
 }
 
 function addScene(): void {
   const scene = store.addScene()
   selectedId.value = scene.id
-  message.value = ''
+  cutMessage.value = ''
 }
 
 function removeScene(id: string): void {
   store.removeScene(id)
   if (selectedId.value === id) selectedId.value = undefined
+  cutMessage.value = ''
 }
 
 async function onGenerate(): Promise<void> {
@@ -71,9 +74,9 @@ function onImport(): void {
 }
 
 function onCutScene(): void {
-  message.value = ''
+  cutMessage.value = ''
   if (!selectedId.value) {
-    message.value = '请先选择一个场次。'
+    cutMessage.value = '请先选择一个场次。'
     return
   }
   const scene = store.scenes.find((s) => s.id === selectedId.value)
@@ -82,11 +85,11 @@ function onCutScene(): void {
   const storyboard = useStoryboardStore()
   const hasShots = storyboard.shots.some((s) => s.beatRef && beatIds.has(s.beatRef))
   if (hasShots) {
-    message.value = '该场次已切分为镜头，如需重新切分请先删除现有镜头。'
+    cutMessage.value = '该场次已切分为镜头，如需重新切分请先删除现有镜头。'
     return
   }
   const shots = features.cutSceneToShots(selectedId.value)
-  message.value =
+  cutMessage.value =
     shots.length > 0 ? `已切分为 ${shots.length} 个镜头。` : '该场次没有节拍，无法切分。'
 }
 </script>
@@ -127,62 +130,40 @@ function onCutScene(): void {
           </button>
         </div>
         <p v-if="store.scenes.length === 0" class="px-3 py-2 text-xs text-ink-muted">
-          暂无场次，可添加或导入 Markdown。
+          暂无场次，可点击「添加场次」创建，或通过右上角 AI 导入。
         </p>
       </div>
     </aside>
 
     <div class="flex min-w-0 flex-1 flex-col">
-      <div class="flex flex-col gap-2 border-b border-edge bg-panel p-3">
-        <div class="flex items-center gap-2">
-          <Input
-            v-model="idea"
-            placeholder="剧本灵感，例如：都市少年与 AI 伙伴的冒险"
-            data-test="idea-input"
-            class="min-w-0 flex-1"
-          />
-          <Button
-            variant="primary"
-            size="sm"
-            class="shrink-0"
-            :disabled="busy"
-            data-test="ai-generate"
-            @click="onGenerate"
-          >
-            AI 生成剧本
-          </Button>
+      <header class="flex shrink-0 items-center justify-between border-b border-edge bg-panel px-4 py-3">
+        <h1 class="text-sm font-semibold text-ink">剧本</h1>
+        <div class="flex items-center gap-1.5">
           <Button
             variant="outline"
             size="sm"
-            class="shrink-0"
             :disabled="!selectedId || busy"
             data-test="cut-btn"
             @click="onCutScene"
           >
             一键切分为镜头
           </Button>
-        </div>
-        <div class="flex items-start gap-2">
-          <Textarea
-            v-model="markdown"
-            :rows="2"
-            placeholder="粘贴 Markdown 剧本（# 场景 / 角色：台词 / 动作：… / 音效：…）"
-            data-test="markdown-input"
-            class="min-w-0 flex-1"
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            class="shrink-0"
-            :disabled="busy"
-            data-test="import-btn"
-            @click="onImport"
+          <button
+            type="button"
+            aria-label="AI 辅助"
+            title="AI 辅助"
+            data-test="ai-btn"
+            class="rounded-md px-1.5 py-1 text-sm text-amber-300/90 transition-colors hover:bg-zinc-800 hover:text-amber-300"
+            @click="aiOpen = true"
           >
-            导入 Markdown
-          </Button>
+            ✨
+          </button>
         </div>
-        <p v-if="message" class="text-xs text-amber-300" data-test="message">{{ message }}</p>
-      </div>
+      </header>
+
+      <p v-if="cutMessage" class="shrink-0 border-b border-edge bg-panel px-4 py-2 text-xs text-amber-300" data-test="message">
+        {{ cutMessage }}
+      </p>
 
       <div class="min-h-0 flex-1 overflow-y-auto">
         <SceneEditor v-if="selectedId" :key="selectedId" :scene-id="selectedId" />
@@ -191,5 +172,49 @@ function onCutScene(): void {
         </p>
       </div>
     </div>
+
+    <Dialog :open="aiOpen" title="AI 辅助" @update:open="aiOpen = $event">
+      <div class="flex flex-col gap-5">
+        <section class="flex flex-col gap-2">
+          <h3 class="text-xs font-semibold text-ink">AI 生成剧本</h3>
+          <Input v-model="idea" placeholder="剧本灵感，例如：都市少年与 AI 伙伴的冒险" data-test="idea-input" />
+          <div class="flex justify-end">
+            <Button
+              variant="primary"
+              size="sm"
+              :disabled="busy"
+              data-test="ai-generate"
+              @click="onGenerate"
+            >
+              生成剧本
+            </Button>
+          </div>
+        </section>
+
+        <section class="flex flex-col gap-2">
+          <h3 class="text-xs font-semibold text-ink">导入 Markdown</h3>
+          <Textarea
+            v-model="markdown"
+            :rows="4"
+            placeholder="粘贴 Markdown 剧本（# 场景 / 角色：台词 / 动作：… / 音效：…）"
+            data-test="markdown-input"
+            class="font-mono text-xs"
+          />
+          <div class="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="busy"
+              data-test="import-btn"
+              @click="onImport"
+            >
+              导入
+            </Button>
+          </div>
+        </section>
+
+        <p v-if="message" class="text-xs text-amber-300" data-test="ai-message">{{ message }}</p>
+      </div>
+    </Dialog>
   </div>
 </template>

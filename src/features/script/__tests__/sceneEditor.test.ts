@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, DOMWrapper } from '@vue/test-utils'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import BeatList from '../BeatList.vue'
@@ -15,6 +15,17 @@ function initProviders(types: Array<'llm'>): void {
   const registry = new PluginRegistry()
   if (types.includes('llm')) registry.register(createStubLLMPlugin())
   usePluginStore().init(registry)
+}
+
+/** AI 辅助在 Dialog（Teleport 到 body），先点 ✨ 打开再从 body 查 */
+async function openAi(w: ReturnType<typeof mount>): Promise<void> {
+  await w.get('[data-test="ai-btn"]').trigger('click')
+}
+
+function inDialog(selector: string): DOMWrapper<Element> {
+  const el = document.body.querySelector(selector)
+  if (!el) throw new Error(`dialog element not found: ${selector}`)
+  return new DOMWrapper(el)
 }
 
 describe('beat list', () => {
@@ -150,13 +161,15 @@ describe('scene editor', () => {
 describe('script panel', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    document.body.innerHTML = ''
   })
 
   it('imports markdown into scenes and selects the first scene', async () => {
     const store = useScriptStore()
     const w = mount(ScriptPanel)
-    await w.get('[data-test="markdown-input"]').setValue('# 第一场：屋顶\n\n小明：你好\n动作：招手\n')
-    await w.get('[data-test="import-btn"]').trigger('click')
+    await openAi(w)
+    await inDialog('[data-test="markdown-input"]').setValue('# 第一场：屋顶\n\n小明：你好\n动作：招手\n')
+    await inDialog('[data-test="import-btn"]').trigger('click')
     expect(store.scenes).toHaveLength(1)
     expect(store.scenes[0].title).toBe('第一场：屋顶')
     expect(store.scenes[0].beats).toHaveLength(2)
@@ -165,21 +178,23 @@ describe('script panel', () => {
 
   it('AI 生成剧本 reports an error when LLM is missing', async () => {
     const w = mount(ScriptPanel)
-    await w.get('[data-test="idea-input"]').setValue('都市少年')
-    await w.get('[data-test="ai-generate"]').trigger('click')
+    await openAi(w)
+    await inDialog('[data-test="idea-input"]').setValue('都市少年')
+    await inDialog('[data-test="ai-generate"]').trigger('click')
     await flushPromises()
-    expect(w.get('[data-test="message"]').text()).toContain('未配置')
+    expect(inDialog('[data-test="ai-message"]').text()).toContain('未配置')
   })
 
   it('AI 生成剧本 imports the generated script when LLM is available', async () => {
     initProviders(['llm'])
     const store = useScriptStore()
     const w = mount(ScriptPanel)
-    await w.get('[data-test="idea-input"]').setValue('都市少年')
-    await w.get('[data-test="ai-generate"]').trigger('click')
+    await openAi(w)
+    await inDialog('[data-test="idea-input"]').setValue('都市少年')
+    await inDialog('[data-test="ai-generate"]').trigger('click')
     await flushPromises()
     expect(store.scenes.length).toBeGreaterThan(0)
-    expect(w.get('[data-test="message"]').text()).toContain('已生成')
+    expect(inDialog('[data-test="ai-message"]').text()).toContain('已生成')
   })
 
   it('一键切分为镜头 creates one shot per beat', async () => {

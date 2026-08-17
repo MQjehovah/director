@@ -42,7 +42,7 @@ describe('app shell', () => {
 
     await buttons[1].trigger('click')
     expect(w.text()).toContain('剧本编辑器')
-    expect(w.get('[data-test="ai-generate"]')).toBeTruthy()
+    expect(w.get('[data-test="ai-btn"]')).toBeTruthy()
 
     await buttons[4].trigger('click')
     expect(w.text()).toContain('任务中心')
