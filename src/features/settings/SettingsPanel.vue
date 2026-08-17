@@ -4,7 +4,6 @@ import { Badge } from '../../components/ui'
 import { usePluginStore } from '../../stores/pluginStore'
 import type { ProviderPlugin, ProviderType } from '../../core/plugin/types'
 import ProviderConfig from './ProviderConfig.vue'
-import WorkflowTemplateManager from './WorkflowTemplateManager.vue'
 
 const store = usePluginStore()
 
@@ -19,6 +18,15 @@ const typeLabels: Record<ProviderType, string> = {
   storage: '存储',
 }
 
+const typeOrder: ProviderType[] = ['media', 'llm', 'tts', 'storage']
+
+const groupedProviders = computed<Array<{ type: ProviderType; providers: ProviderPlugin[] }>>(
+  () =>
+    typeOrder
+      .map((type) => ({ type, providers: providers.value.filter((p) => p.providerType === type) }))
+      .filter((g) => g.providers.length > 0),
+)
+
 const enabledSummary = computed<ProviderType[]>(() => {
   const types: ProviderType[] = ['media', 'llm', 'tts', 'storage']
   return types.filter((t) => store.enabledProviders(t).length > 0)
@@ -30,7 +38,7 @@ const enabledSummary = computed<ProviderType[]>(() => {
     <header>
       <h1 class="text-lg font-semibold text-ink">设置</h1>
       <p class="mt-1 text-xs leading-relaxed text-ink-muted">
-        配置各 Provider 的地址、密钥与模型参数，可独立启停能力。未配置真实 Provider 时使用内置 mock。
+        按 Provider 配置地址、密钥与模型参数，可独立启停能力。点击卡片展开详情；未配置真实 Provider 时使用内置 mock。
       </p>
     </header>
 
@@ -46,21 +54,25 @@ const enabledSummary = computed<ProviderType[]>(() => {
       </div>
     </section>
 
-    <section>
-      <h2 class="text-xs font-semibold uppercase tracking-wide text-ink-muted">Provider 列表</h2>
+    <section v-for="group in groupedProviders" :key="group.type">
+      <h2
+        class="text-xs font-semibold uppercase tracking-wide text-ink-muted"
+        data-test="provider-group"
+      >
+        {{ typeLabels[group.type] }}
+      </h2>
       <div class="mt-2 flex flex-col gap-3">
         <ProviderConfig
-          v-for="p in providers"
+          v-for="p in group.providers"
           :key="p.id"
           :provider="p"
           data-test="provider-row"
         />
-        <p v-if="providers.length === 0" data-test="providers-empty" class="text-xs text-ink-muted">
-          尚未注册 Provider —— 插件在应用启动时注册（后续任务接入）。
-        </p>
       </div>
     </section>
 
-    <WorkflowTemplateManager />
+    <p v-if="providers.length === 0" data-test="providers-empty" class="text-xs text-ink-muted">
+      尚未注册 Provider —— 插件在应用启动时注册。
+    </p>
   </div>
 </template>

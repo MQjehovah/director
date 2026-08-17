@@ -143,6 +143,7 @@ describe('provider config', () => {
     const provider = makeProvider()
     initStore(provider)
     const w = mount(ProviderConfig, { props: { provider } })
+    await w.get('[data-test="provider-header"]').trigger('click')
     await w.get('[data-test="config-base-url"]').setValue('http://example.com')
     await w.get('[data-test="config-api-key"]').setValue('sk-test')
     await w.get('[data-test="config-model"]').setValue('flux')
@@ -162,6 +163,7 @@ describe('provider config', () => {
     }
     initStore(provider)
     const w = mount(ProviderConfig, { props: { provider } })
+    await w.get('[data-test="provider-header"]').trigger('click')
     const select = w.get('[data-test="config-workflow-template-id"]')
     expect(select.element.tagName).toBe('SELECT')
     const optionLabels = select.findAll('option').map((o) => o.text())
@@ -176,6 +178,7 @@ describe('provider config', () => {
     }
     initStore(provider)
     const w = mount(ProviderConfig, { props: { provider } })
+    await w.get('[data-test="provider-header"]').trigger('click')
     expect(w.find('[data-test="config-base-url"]').exists()).toBe(true)
     expect(w.find('[data-test="config-api-key"]').exists()).toBe(false)
     expect(w.find('[data-test="config-model"]').exists()).toBe(false)
@@ -184,6 +187,7 @@ describe('provider config', () => {
   it('hides config fields for providers without configFields (e.g. IndexedDB storage)', async () => {
     initStore(createStorageIndexedDBPlugin())
     const w = mount(ProviderConfig, { props: { provider: createStorageIndexedDBPlugin() } })
+    await w.get('[data-test="provider-header"]').trigger('click')
     expect(w.find('[data-test="config-base-url"]').exists()).toBe(false)
     expect(w.find('[data-test="config-api-key"]').exists()).toBe(false)
     expect(w.find('[data-test="config-model"]').exists()).toBe(false)
