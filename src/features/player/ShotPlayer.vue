@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useShotActions } from '../storyboard/useShotActions'
+import { shotDuration } from './subtitles'
 import type { Shot } from '../../core/models'
 
 const props = withDefaults(
@@ -20,11 +21,15 @@ const resolvedUrl = ref<string | undefined>(undefined)
 
 watch(
   () => props.shot.mediaAssets[0],
-  (assetId) => {
+  (assetId, _old, onCleanup) => {
     resolvedUrl.value = undefined
     if (!assetId) return
+    let cancelled = false
     void actions.resolveAssetUrl(assetId).then((url) => {
-      resolvedUrl.value = url
+      if (!cancelled) resolvedUrl.value = url
+    })
+    onCleanup(() => {
+      cancelled = true
     })
   },
   { immediate: true },
@@ -32,16 +37,16 @@ watch(
 
 type CameraMove = NonNullable<Shot['camera']>['move']
 
-const MOVE_TRANSFORMS: Record<CameraMove, string> = {
-  static: 'scale(1.2)',
-  'zoom-in': 'scale(1.35)',
-  'zoom-out': 'scale(1.1)',
-  pan: 'translateX(-5%) scale(1.25)',
-  tilt: 'translateY(-5%) scale(1.25)',
-  tracking: 'translateX(5%) scale(1.25)',
+const MOVE_TRANSFORMS: Record<CameraMove, { from: string; to: string }> = {
+  static: { from: 'scale(1.05)', to: 'scale(1.2)' },
+  'zoom-in': { from: 'scale(1.05)', to: 'scale(1.35)' },
+  'zoom-out': { from: 'scale(1.1)', to: 'scale(1.05)' },
+  pan: { from: 'translateX(0) scale(1.15)', to: 'translateX(-5%) scale(1.25)' },
+  tilt: { from: 'translateY(0) scale(1.15)', to: 'translateY(-5%) scale(1.25)' },
+  tracking: { from: 'translateX(0) scale(1.15)', to: 'translateX(5%) scale(1.25)' },
 }
 
-const duration = computed(() => props.shot.camera?.duration ?? 4)
+const duration = computed(() => shotDuration(props.shot))
 
 const displayAsImage = computed(() => {
   const url = resolvedUrl.value
@@ -49,13 +54,15 @@ const displayAsImage = computed(() => {
   return props.shot.shotType === 'image' || url.startsWith('data:image')
 })
 
-const kenBurnsTransform = computed(
+const kenBurns = computed(
   () => MOVE_TRANSFORMS[props.shot.camera?.move ?? 'static'] ?? MOVE_TRANSFORMS.static,
 )
 
-const imageStyle = computed(() => ({
-  transform: props.playing ? kenBurnsTransform.value : 'scale(1.05)',
-  transition: `transform ${duration.value}s ease-in-out`,
+const kenBurnsStyle = computed(() => ({
+  '--kb-from': kenBurns.value.from,
+  '--kb-to': kenBurns.value.to,
+  animationDuration: `${duration.value}s`,
+  animationPlayState: props.playing ? 'running' : 'paused',
 }))
 </script>
 
@@ -64,9 +71,10 @@ const imageStyle = computed(() => ({
     <template v-if="displayAsImage">
       <img
         v-if="resolvedUrl"
+        :key="shot.id"
         :src="resolvedUrl"
-        :style="imageStyle"
-        class="h-full w-full object-cover"
+        :style="kenBurnsStyle"
+        class="ken-burns h-full w-full object-cover"
         alt=""
         data-test="shot-image"
       />
@@ -80,6 +88,7 @@ const imageStyle = computed(() => ({
     </template>
     <video
       v-else
+      :key="shot.id"
       :src="resolvedUrl"
       controls
       muted
@@ -96,3 +105,21 @@ const imageStyle = computed(() => ({
     </span>
   </div>
 </template>
+
+<style scoped>
+.ken-burns {
+  animation-name: ken-burns;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+
+@keyframes ken-burns {
+  from {
+    transform: var(--kb-from);
+  }
+  to {
+    transform: var(--kb-to);
+  }
+}
+</style>

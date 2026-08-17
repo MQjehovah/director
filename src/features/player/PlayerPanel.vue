@@ -41,7 +41,8 @@ function widthPct(shot: Shot): number {
 
       <div class="overflow-hidden rounded-lg border border-edge bg-zinc-950" data-test="player-shot">
         <ShotPlayer
-          :shot="store.shots[player.currentIndex.value]!"
+          v-if="player.currentShot.value"
+          :shot="player.currentShot.value"
           :subtitle="player.currentSubtitle.value?.text"
           :playing="player.playing.value"
         />
@@ -95,7 +96,7 @@ function widthPct(shot: Shot): number {
         {{ player.currentSubtitle.value.text }}
       </p>
 
-      <div class="flex w-full items-stretch gap-1" data-test="player-timeline">
+      <div class="flex w-full items-stretch gap-1 overflow-x-auto" data-test="player-timeline">
         <button
           v-for="(shot, index) in store.shots"
           :key="shot.id"

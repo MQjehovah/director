@@ -8,6 +8,33 @@ export interface SubtitleEntry {
   duration: number
 }
 
+export interface AudioEntry {
+  shotId: string
+  audioAssetId?: string
+  start: number
+  end: number
+  duration: number
+}
+
+export type AudioResolver = (shot: Shot) => string | undefined
+
+export function buildAudioTrack(shots: Shot[], resolver?: AudioResolver): AudioEntry[] {
+  const resolveId = resolver ?? (() => undefined)
+  let start = 0
+  return shots.map((shot) => {
+    const duration = shotDuration(shot)
+    const entry: AudioEntry = {
+      shotId: shot.id,
+      audioAssetId: resolveId(shot),
+      start,
+      end: start + duration,
+      duration,
+    }
+    start += duration
+    return entry
+  })
+}
+
 export type DialogueResolver = (shot: Shot) => string | undefined
 
 interface ShotWithFallbacks {
@@ -46,7 +73,7 @@ export function subtitleForTime(track: SubtitleEntry[], time: number): SubtitleE
   return track.find((entry) => time >= entry.start && time < entry.end)
 }
 
-export function totalDuration(track: SubtitleEntry[]): number {
+export function totalDuration(track: SubtitleEntry[] | AudioEntry[]): number {
   return track.reduce((sum, entry) => sum + entry.duration, 0)
 }
 

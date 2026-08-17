@@ -6,6 +6,7 @@ import {
   subtitleForTime,
   totalDuration,
   beatDialogueForShot,
+  buildAudioTrack,
 } from '../subtitles'
 import { usePlayer } from '../usePlayer'
 import ShotPlayer from '../ShotPlayer.vue'
@@ -59,6 +60,17 @@ describe('player subtitles', () => {
     const shots = [{ id: 's1', beatRef: 'b1', shotType: 'image', camera: makeCamera(3) }] as Shot[]
     const track = buildSubtitleTrack(shots, (shot) => beatDialogueForShot(script, shot))
     expect(track[0].text).toBe('小明：你好')
+  })
+
+  it('builds an audio track aligned to shot durations', () => {
+    const shots = [
+      { id: 's1', duration: 2, audioAssetId: 'a1' },
+      { id: 's2', duration: 3, audioAssetId: 'a2' },
+    ] as any
+    const track = buildAudioTrack(shots, (shot) => (shot as any).audioAssetId)
+    expect(track[0]).toMatchObject({ shotId: 's1', audioAssetId: 'a1', start: 0, end: 2 })
+    expect(track[1]).toMatchObject({ shotId: 's2', audioAssetId: 'a2', start: 2, end: 5 })
+    expect(totalDuration(track)).toBe(5)
   })
 })
 

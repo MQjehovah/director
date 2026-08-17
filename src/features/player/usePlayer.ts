@@ -21,6 +21,7 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
   const currentTime = ref(0)
 
   let timer: ReturnType<typeof setInterval> | undefined
+  let lastTickAt = 0
 
   const currentShot = computed<Shot | undefined>(() => shots.value[currentIndex.value])
   const currentSubtitle = computed<SubtitleEntry | undefined>(() => track.value[currentIndex.value])
@@ -51,8 +52,11 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
       stop()
       return
     }
+    const now = Date.now()
+    const delta = lastTickAt === 0 ? tickMs / 1000 : (now - lastTickAt) / 1000
+    lastTickAt = now
     const duration = shotDuration(shot)
-    currentTime.value += tickMs / 1000
+    currentTime.value += delta
     if (currentTime.value < duration) return
     const overflow = currentTime.value - duration
     if (currentIndex.value < shots.value.length - 1) {
@@ -79,6 +83,7 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
       currentTime.value = 0
     }
     playing.value = true
+    lastTickAt = Date.now()
     if (timer === undefined) timer = setInterval(tick, tickMs)
   }
 
@@ -127,6 +132,7 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
         currentIndex.value = 0
         currentTime.value = 0
         playing.value = false
+        stop()
       } else if (currentIndex.value >= length) {
         currentIndex.value = length - 1
         currentTime.value = 0
