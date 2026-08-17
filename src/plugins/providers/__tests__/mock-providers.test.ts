@@ -24,7 +24,7 @@ describe('mock providers', () => {
   })
   it('media mock supports text2video capability', async () => {
     const p = createMediaMockProvider()
-    expect(p.capabilities.text2video).toBe(true)
+    expect(p.capabilities.includes('text2video')).toBe(true)
     const job = await p.generateVideo({ prompt: 'x' })
     expect(job.type).toBe('text2video')
     const done = await p.waitForJob(job.id)

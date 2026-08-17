@@ -10,7 +10,7 @@ function makeProvider(): ProviderPlugin {
     kind: 'provider',
     providerType: 'media',
     enabled: true,
-    capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+    capabilities: ['text2image'],
   }
 }
 

@@ -7,6 +7,7 @@ import type {
   TextToImageParams,
   TextToVideoParams,
 } from '../../providers/MediaProvider'
+import { createJobController } from '../../providers/capabilities'
 import { loadProviderConfig } from '../../features/settings/httpBackendConfig'
 
 export const MEDIA_DASHSCOPE_ID = 'media-dashscope'
@@ -49,54 +50,16 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
   const pollIntervalMs = opts.pollIntervalMs ?? 2000
   let seq = 0
 
-  const jobs = new Map<string, Job>()
+  const ctrl = createJobController({ pollIntervalMs })
   const assets = new Map<string, Asset>()
-  const listeners = new Set<(job: Job) => void>()
-  const pollers = new Map<string, ReturnType<typeof setInterval>>()
 
   function nextId(prefix: string): string {
     seq += 1
     return `${prefix}-${Date.now().toString(36)}-${seq}`
   }
 
-  function emit(job: Job): void {
-    for (const cb of listeners) cb(job)
-  }
-
-  function updateJob(job: Job): void {
-    jobs.set(job.id, job)
-    emit(job)
-  }
-
-  async function getJob(id: string): Promise<Job> {
-    const job = jobs.get(id)
-    if (!job) throw new Error(`job not found: ${id}`)
-    return job
-  }
-
-  function onJobUpdate(cb: (job: Job) => void): () => void {
-    listeners.add(cb)
-    return () => listeners.delete(cb)
-  }
-
-  async function waitForJob(id: string, timeoutMs = 120000): Promise<Job> {
-    const startedAt = Date.now()
-    for (;;) {
-      const job = await getJob(id)
-      if (job.status !== 'queued' && job.status !== 'running') return job
-      if (Date.now() - startedAt > timeoutMs) throw new Error(`waitForJob timed out: ${id}`)
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-    }
-  }
-
   async function getAsset(assetId: string): Promise<Asset | undefined> {
     return assets.get(assetId)
-  }
-
-  function stopPoll(id: string): void {
-    const t = pollers.get(id)
-    if (t) clearInterval(t)
-    pollers.delete(id)
   }
 
   /** 任务查询端点：从创建任务的 URL 推导 /api/v1/tasks/{id} */
@@ -104,6 +67,16 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
     const match = /^(https?:\/\/[^/]+)\/(api\/v\d+)/.exec(baseUrl)
     if (match) return `${match[1]}/${match[2]}/tasks/${id}`
     return `${baseUrl.replace(/\/$/, '')}/tasks/${id}`
+  }
+
+  /** 轮询前确认任务未被取消：避免「取消 → 完成」竞态覆盖 canceled 状态 */
+  async function isCanceled(id: string): Promise<boolean> {
+    try {
+      const job = await ctrl.getJob(id)
+      return job.status === 'canceled'
+    } catch {
+      return false
+    }
   }
 
   async function pollTask(id: string): Promise<void> {
@@ -120,16 +93,16 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
       const status = data.output?.task_status
       if (!status) throw new Error('DashScope 返回缺少 task_status')
       if (status === 'PENDING' || status === 'RUNNING') {
-        const job = jobs.get(id)
-        if (job) updateJob(JobSchema.parse({ ...job, status: 'running', progress: 30 }))
+        if (await isCanceled(id)) return
+        ctrl.patchJob(id, { status: 'running', progress: 30 })
         return
       }
-      stopPoll(id)
+      if (await isCanceled(id)) return
+      ctrl.stopPoller(id)
       if (status === 'SUCCEEDED') {
         const urls = (data.output.results ?? []).map((r) => r.url).filter(Boolean) as string[]
         if (urls.length === 0) {
-          const job = jobs.get(id)
-          if (job) updateJob(JobSchema.parse({ ...job, status: 'failed', progress: 100 }))
+          ctrl.patchJob(id, { status: 'failed', progress: 100 })
           return
         }
         const assetId = nextId('asset')
@@ -140,43 +113,27 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
           url: urls[0],
         })
         assets.set(assetId, asset)
-        const job = jobs.get(id)
-        if (job) {
-          updateJob(
-            JobSchema.parse({ ...job, status: 'done', progress: 100, result: { assetIds: [assetId] } }),
-          )
-        }
+        ctrl.patchJob(id, { status: 'done', progress: 100, result: { assetIds: [assetId] } })
         return
       }
       // FAILED / CANCELED / UNKNOWN
-      const job = jobs.get(id)
-      if (job) {
-        updateJob(
-          JobSchema.parse({
-            ...job,
-            status: 'failed',
-            progress: 100,
-            result: {
-              data: {
-                error: data.output?.results?.[0]?.message ?? data.message ?? status,
-              },
-            },
-          }),
-        )
-      }
+      ctrl.patchJob(id, {
+        status: 'failed',
+        progress: 100,
+        result: {
+          data: {
+            error: data.output?.results?.[0]?.message ?? data.message ?? status,
+          },
+        },
+      })
     } catch (err) {
-      stopPoll(id)
-      const job = jobs.get(id)
-      if (job) {
-        updateJob(
-          JobSchema.parse({
-            ...job,
-            status: 'failed',
-            progress: 100,
-            result: { data: { error: err instanceof Error ? err.message : String(err) } },
-          }),
-        )
-      }
+      if (await isCanceled(id)) return
+      ctrl.stopPoller(id)
+      ctrl.patchJob(id, {
+        status: 'failed',
+        progress: 100,
+        result: { data: { error: err instanceof Error ? err.message : String(err) } },
+      })
     }
   }
 
@@ -218,19 +175,9 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
       pluginId: MEDIA_DASHSCOPE_ID,
       params: { prompt: params.prompt, negativePrompt: params.negativePrompt, model },
     })
-    updateJob(job)
-    const poller = setInterval(() => void pollTask(job.id), pollIntervalMs)
-    pollers.set(job.id, poller)
+    ctrl.setJob(job)
+    ctrl.startPoller(job.id, () => pollTask(job.id), pollIntervalMs)
     return job
-  }
-
-  async function cancelJob(id: string): Promise<Job> {
-    const job = jobs.get(id)
-    if (!job) throw new Error(`job not found: ${id}`)
-    stopPoll(id)
-    const canceled = JobSchema.parse({ ...job, status: 'canceled', progress: job.progress })
-    updateJob(canceled)
-    return canceled
   }
 
   async function generateVideo(_params: ImageToVideoParams | TextToVideoParams): Promise<Job> {
@@ -240,13 +187,13 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
   return {
     id: MEDIA_DASHSCOPE_ID,
     name: 'DashScope 文生图',
-    capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+    capabilities: ['text2image'],
     generateImage,
     generateVideo,
-    getJob,
-    cancelJob,
-    onJobUpdate,
-    waitForJob,
+    getJob: ctrl.getJob,
+    cancelJob: ctrl.cancelJob,
+    onJobUpdate: ctrl.onJobUpdate,
+    waitForJob: ctrl.waitForJob,
     getAsset,
   }
 }

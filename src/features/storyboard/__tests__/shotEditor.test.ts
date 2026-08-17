@@ -227,11 +227,11 @@ describe('useShotActions', () => {
       kind: 'provider',
       providerType: 'media',
       enabled: true,
-      capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+      capabilities: ['text2image'],
       instance: {
         id: 'media-sync',
         name: 'Sync Media',
-        capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+        capabilities: ['text2image'],
         async generateImage() {
           return {
             id: 'sync-job',

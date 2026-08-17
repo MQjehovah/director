@@ -77,22 +77,7 @@ describe('plugin store', () => {
       expect(s.hasCapability(p, 'text2image')).toBe(true)
     })
 
-    it('hasCapability handles the legacy boolean bitmask shape', () => {
-      const s = usePluginStore()
-      const p: ProviderPlugin = {
-        id: 'p1',
-        name: 'P1',
-        kind: 'provider',
-        providerType: 'media',
-        enabled: true,
-        capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
-      }
-      expect(s.hasCapability(p, 'text2image')).toBe(true)
-      expect(s.hasCapability(p, 'image2video')).toBe(false)
-      expect(s.hasCapability(p, 'upscale')).toBe(false)
-    })
-
-    it('hasCapability handles the new capability-name array shape', () => {
+    it('hasCapability still handles a legacy boolean bitmask shape defensively', () => {
       const s = usePluginStore()
       const p = {
         id: 'p1',
@@ -100,8 +85,23 @@ describe('plugin store', () => {
         kind: 'provider',
         providerType: 'media',
         enabled: true,
-        capabilities: ['text2image', 'image2video'],
+        capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
       } as unknown as ProviderPlugin
+      expect(s.hasCapability(p, 'text2image')).toBe(true)
+      expect(s.hasCapability(p, 'image2video')).toBe(false)
+      expect(s.hasCapability(p, 'upscale')).toBe(false)
+    })
+
+    it('hasCapability handles the new capability-name array shape', () => {
+      const s = usePluginStore()
+      const p: ProviderPlugin = {
+        id: 'p1',
+        name: 'P1',
+        kind: 'provider',
+        providerType: 'media',
+        enabled: true,
+        capabilities: ['text2image', 'image2video'],
+      }
       expect(s.hasCapability(p, 'text2image')).toBe(true)
       expect(s.hasCapability(p, 'image2video')).toBe(true)
       expect(s.hasCapability(p, 'text2video')).toBe(false)
@@ -123,7 +123,7 @@ describe('plugin store', () => {
         kind: 'provider',
         providerType: 'media',
         enabled: true,
-        capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+        capabilities: ['text2image'],
         instance: { id: 'media-other', name: 'Other Media' },
       })
       s.init(r)
@@ -141,7 +141,7 @@ describe('plugin store', () => {
         kind: 'provider',
         providerType: 'media',
         enabled: true,
-        capabilities: { text2image: false, image2video: true, text2video: false, upscale: false },
+        capabilities: ['image2video'],
         instance: { id: 'media-video', name: 'Video Media' },
       })
       s.init(r)
@@ -161,7 +161,7 @@ describe('plugin store', () => {
         providerType: 'media',
         enabled: true,
         capabilities: ['text2image'],
-      } as unknown as ProviderPlugin)
+      })
       s.init(r)
       s.setActiveProvider('media', 'media-no-instance')
       expect((s.resolveInstanceCapability('media', 'text2image') as { id: string } | undefined)?.id).toBe('media-mock')
@@ -177,7 +177,7 @@ describe('plugin store', () => {
         kind: 'provider',
         providerType: 'media',
         enabled: true,
-        capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+        capabilities: ['text2image'],
       })
       s.init(r)
       s.setActiveProvider('media', 'media-other')
@@ -206,7 +206,7 @@ describe('plugin store', () => {
         providerType: 'media',
         enabled: true,
         capabilities: ['text2image', 'image2video'],
-      } as unknown as ProviderPlugin)
+      })
       s.init(r)
       s.setActiveProvider('media', 'media-array')
       expect(s.resolveProviderCapability('media', 'image2video')?.id).toBe('media-array')
@@ -233,7 +233,7 @@ describe('plugin store', () => {
         kind: 'provider',
         providerType: 'media',
         enabled: true,
-        capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+        capabilities: ['text2image'],
         instance: { id: 'media-other', name: 'Other Media' },
       })
       s.init(r)

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { createMediaDashScopeProvider, MEDIA_DASHSCOPE_ID } from '../media-dashscope'
 import { saveProviderConfig, clearProviderConfig } from '../../../features/settings/httpBackendConfig'
 
@@ -127,5 +128,36 @@ describe('media-dashscope provider', () => {
     const before = vi.mocked(fetch).mock.calls.length
     await vi.advanceTimersByTimeAsync(50)
     expect(vi.mocked(fetch).mock.calls.length).toBe(before)
+  })
+
+  it('does not let an in-flight poll overwrite a canceled job with done', async () => {
+    saveProviderConfig(MEDIA_DASHSCOPE_ID, { apiKey: 'sk-test' })
+    let releasePoll!: () => void
+    const pollPromise = new Promise<Response>((resolve) => {
+      releasePoll = () =>
+        resolve(
+          jsonResponse({
+            output: {
+              task_id: 't5',
+              task_status: 'SUCCEEDED',
+              results: [{ url: 'https://dashscope-result.example.com/a.png' }],
+            },
+          }),
+        )
+    })
+    const fetchMock = vi.fn((url: string) => {
+      if (String(url).includes('/image-synthesis'))
+        return Promise.resolve(jsonResponse({ output: { task_id: 't5', task_status: 'PENDING' } }))
+      if (String(url).includes('/tasks/')) return pollPromise
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaDashScopeProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: 'x' })
+    vi.advanceTimersByTime(10)
+    await p.cancelJob('t5')
+    releasePoll()
+    await flushPromises()
+    expect((await p.getJob('t5')).status).toBe('canceled')
   })
 })

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { createMediaComfyUIProvider, MEDIA_COMFYUI_ID, DEFAULT_TXT2IMG_WORKFLOW } from '../media-comfyui'
 import { saveProviderConfig, clearProviderConfig } from '../../../features/settings/httpBackendConfig'
 
@@ -128,5 +129,35 @@ describe('media-comfyui provider', () => {
     const before = vi.mocked(fetch).mock.calls.length
     await vi.advanceTimersByTimeAsync(50)
     expect(vi.mocked(fetch).mock.calls.length).toBe(before)
+  })
+
+  it('does not let an in-flight poll overwrite a canceled job with done', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    let releaseHistory!: () => void
+    const historyPromise = new Promise<Response>((resolve) => {
+      releaseHistory = () =>
+        resolve(
+          jsonResponse({
+            p5: {
+              status: { completed: true },
+              outputs: { '9': { images: [{ filename: 'a.png', subfolder: '', type: 'output' }] } },
+            },
+          }),
+        )
+    })
+    const fetchMock = vi.fn((url: string) => {
+      if (String(url).endsWith('/prompt')) return Promise.resolve(jsonResponse({ prompt_id: 'p5' }))
+      if (String(url).includes('/history/')) return historyPromise
+      if (String(url).includes('/view?')) return Promise.resolve(pngResponse())
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: 'x' })
+    vi.advanceTimersByTime(10)
+    await p.cancelJob('p5')
+    releaseHistory()
+    await flushPromises()
+    expect((await p.getJob('p5')).status).toBe('canceled')
   })
 })

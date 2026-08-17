@@ -4,12 +4,8 @@ export type ProviderType = 'media' | 'llm' | 'tts' | 'storage'
 
 export type MediaCapability = 'text2image' | 'text2video' | 'image2video' | 'editImage' | 'upscale'
 
-export interface ProviderCapabilities {
-  text2image: boolean
-  image2video: boolean
-  text2video: boolean
-  upscale: boolean
-}
+/** 能力名集合：保持该名称向后兼容（MediaProviderCapabilities 别名引用） */
+export type ProviderCapabilities = MediaCapability[]
 
 export type ProviderConfigField = 'baseUrl' | 'apiKey' | 'model' | 'workflow'
 
@@ -25,7 +21,7 @@ export interface PluginBase {
 export interface ProviderPlugin<T = unknown> extends PluginBase {
   kind: 'provider'
   providerType: ProviderType
-  capabilities?: ProviderCapabilities
+  capabilities?: MediaCapability[]
   configFields?: ProviderConfigField[]
   instance?: T
 }

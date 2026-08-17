@@ -9,7 +9,7 @@ function makeProvider(): ProviderPlugin {
     kind: 'provider',
     providerType: 'media',
     enabled: true,
-    capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+    capabilities: ['text2image'],
   }
 }
 
@@ -30,7 +30,7 @@ describe('plugin registry', () => {
   it('resolves providers filtered by providerType', () => {
     const r = new PluginRegistry()
     r.register(makeProvider())
-    r.register({ id: 'llm1', name: 'LLM', kind: 'provider', providerType: 'llm', enabled: true, capabilities: { text2image: false, image2video: false, text2video: false, upscale: false } })
+    r.register({ id: 'llm1', name: 'LLM', kind: 'provider', providerType: 'llm', enabled: true, capabilities: [] })
     expect(r.resolveProvider('media')).toHaveLength(1)
     expect(r.resolveProvider('llm')).toHaveLength(1)
     expect(r.resolveProvider('tts')).toHaveLength(0)
@@ -38,7 +38,7 @@ describe('plugin registry', () => {
   it('resolveEnabledProvider excludes disabled providers', () => {
     const r = new PluginRegistry()
     r.register(makeProvider())
-    r.register({ id: 'mock2', name: 'Mock2', kind: 'provider', providerType: 'media', enabled: false, capabilities: { text2image: true, image2video: false, text2video: false, upscale: false } })
+    r.register({ id: 'mock2', name: 'Mock2', kind: 'provider', providerType: 'media', enabled: false, capabilities: ['text2image'] })
     expect(r.resolveEnabledProvider('media')).toHaveLength(1)
     expect(r.resolveEnabledProvider('media')[0].id).toBe('mock')
   })

@@ -7,6 +7,7 @@ import type {
   TextToImageParams,
   TextToVideoParams,
 } from '../../providers/MediaProvider'
+import { createJobController } from '../../providers/capabilities'
 
 export interface MediaMockOptions {
   delayMs?: number
@@ -16,10 +17,6 @@ export interface MediaMockOptions {
 export interface MediaMockProvider extends MediaProvider {
   waitForJob(id: string, timeoutMs?: number): Promise<Job>
   getAsset(assetId: string): Promise<Asset | undefined>
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function placeholderSvgUrl(label: string, width: number, height: number): string {
@@ -36,9 +33,8 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
   const delayMs = opts.delayMs ?? 250
   const pollIntervalMs = opts.pollIntervalMs ?? 25
 
-  const jobs = new Map<string, Job>()
+  const ctrl = createJobController({ pollIntervalMs })
   const assets = new Map<string, Asset>()
-  const listeners = new Set<(job: Job) => void>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   let seq = 0
 
@@ -47,55 +43,25 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
     return `${prefix}-${Date.now().toString(36)}-${seq}`
   }
 
-  function emit(job: Job): void {
-    for (const cb of listeners) cb(job)
-  }
-
-  function updateJob(job: Job): void {
-    jobs.set(job.id, job)
-    emit(job)
-  }
-
-  async function getJob(id: string): Promise<Job> {
-    const job = jobs.get(id)
-    if (!job) throw new Error(`job not found: ${id}`)
-    return job
-  }
-
-  function onJobUpdate(cb: (job: Job) => void): () => void {
-    listeners.add(cb)
-    return () => listeners.delete(cb)
-  }
-
-  async function waitForJob(id: string, timeoutMs = 5000): Promise<Job> {
-    const startedAt = Date.now()
-    for (;;) {
-      const job = await getJob(id)
-      if (job.status !== 'queued' && job.status !== 'running') return job
-      if (Date.now() - startedAt > timeoutMs) throw new Error(`waitForJob timed out: ${id}`)
-      await sleep(pollIntervalMs)
-    }
-  }
-
   async function getAsset(assetId: string): Promise<Asset | undefined> {
     return assets.get(assetId)
   }
 
+  async function waitForJob(id: string, timeoutMs = 5000): Promise<Job> {
+    return ctrl.waitForJob(id, timeoutMs)
+  }
+
   async function cancelJob(id: string): Promise<Job> {
-    const job = jobs.get(id)
-    if (!job) throw new Error(`job not found: ${id}`)
     const timer = timers.get(id)
     if (timer) clearTimeout(timer)
     timers.delete(id)
-    const canceled = JobSchema.parse({ ...job, status: 'canceled', progress: job.progress })
-    updateJob(canceled)
-    return canceled
+    return ctrl.cancelJob(id)
   }
 
   function scheduleCompletion(job: Job, assetId: string): void {
     const timer = setTimeout(() => {
       timers.delete(job.id)
-      updateJob(JobSchema.parse({ ...job, status: 'done', progress: 100, result: { assetIds: [assetId] } }))
+      ctrl.patchJob(job.id, { status: 'done', progress: 100, result: { assetIds: [assetId] } })
     }, delayMs)
     timers.set(job.id, timer)
   }
@@ -121,7 +87,7 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
       params: { prompt: params.prompt, negativePrompt: params.negativePrompt, width, height, seed: params.seed },
       pluginId: 'media-mock',
     })
-    updateJob(job)
+    ctrl.setJob(job)
     scheduleCompletion(job, assetId)
     return job
   }
@@ -147,7 +113,7 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
       params: { ...params },
       pluginId: 'media-mock',
     })
-    updateJob(job)
+    ctrl.setJob(job)
     scheduleCompletion(job, assetId)
     return job
   }
@@ -155,12 +121,12 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
   return {
     id: 'media-mock',
     name: 'Mock 媒体',
-    capabilities: { text2image: true, image2video: true, text2video: true, upscale: false },
+    capabilities: ['text2image', 'image2video', 'text2video'],
     generateImage,
     generateVideo,
-    getJob,
+    getJob: ctrl.getJob,
     cancelJob,
-    onJobUpdate,
+    onJobUpdate: ctrl.onJobUpdate,
     waitForJob,
     getAsset,
   }
