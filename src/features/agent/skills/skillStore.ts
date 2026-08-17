@@ -94,8 +94,14 @@ function writeAll(skills: AgentSkill[]): void {
 }
 
 function ensureBuiltinSkills(): void {
-  if (readRaw() !== null) return
-  writeAll(builtinSkills())
+  // key 缺失或内容损坏（解析失败/被过滤为空）时重新播种，避免用户永久失去内置技能
+  if (readRaw() === null) {
+    writeAll(builtinSkills())
+    return
+  }
+  if (readAll().length === 0) {
+    writeAll(builtinSkills())
+  }
 }
 
 export function listSkills(): AgentSkill[] {

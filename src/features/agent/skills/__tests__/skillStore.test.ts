@@ -119,6 +119,19 @@ describe('skillStore', () => {
     expect(skills.every((s) => s.builtIn)).toBe(true)
   })
 
+  it('re-seeds built-in skills when stored data is corrupted', () => {
+    localStorage.setItem('ai-director:agent-skills', '{oops')
+    const skills = listSkills()
+    expect(skills).toHaveLength(5)
+    expect(skills.some((s) => s.id === 'director-voice')).toBe(true)
+  })
+
+  it('re-seeds built-in skills when stored data filters to empty', () => {
+    localStorage.setItem('ai-director:agent-skills', JSON.stringify([{ id: 1 }]))
+    const skills = listSkills()
+    expect(skills).toHaveLength(5)
+  })
+
   it('tolerates unavailable localStorage', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('SecurityError')

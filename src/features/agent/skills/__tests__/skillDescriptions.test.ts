@@ -19,7 +19,7 @@ describe('buildSkillsContext', () => {
       description: '技能A描述',
       kind: 'skill-md',
       enabled: true,
-      markdown: 'x',
+      markdown: '这是技能A的正文',
     })
     saveSkill({
       id: 'b',
@@ -27,11 +27,11 @@ describe('buildSkillsContext', () => {
       description: '技能B描述',
       kind: 'skill-md',
       enabled: false,
-      markdown: 'y',
+      markdown: '这是技能B的正文',
     })
     const ctx = buildSkillsContext(listSkills())
-    expect(ctx).toContain('技能A描述')
-    expect(ctx).not.toContain('技能B描述')
+    expect(ctx).toContain('这是技能A的正文')
+    expect(ctx).not.toContain('这是技能B的正文')
   })
 
   it('describes prompt-template skills with their placeholders', () => {
@@ -42,12 +42,26 @@ describe('buildSkillsContext', () => {
     expect(ctx).toContain('{{shotType}}')
   })
 
-  it('describes skill-md skills via their description', () => {
+  it('describes skill-md skills with their full markdown content', () => {
     const director = listSkills().find((s) => s.id === 'director-voice')
     expect(director).toBeDefined()
-    expect(buildSkillsContext([director as typeof director & { enabled: boolean }])).toBe(
-      director?.description,
-    )
+    const ctx = buildSkillsContext([director as NonNullable<typeof director>])
+    expect(ctx).toContain('先给结论，再补充细节')
+    expect(ctx).toContain('使用中文影视术语')
+  })
+
+  it('skips project-tool skills (tools are described by the agent engine)', () => {
+    const ctx = buildSkillsContext([
+      {
+        id: 'tool-generate_script',
+        name: 'generate_script',
+        description: '生成剧本',
+        kind: 'project-tool',
+        enabled: true,
+        toolName: 'generate_script',
+      },
+    ])
+    expect(ctx).toBe('')
   })
 
   it('describes comfyui-workflow skills', () => {
