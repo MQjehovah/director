@@ -8,8 +8,8 @@ export interface TTSSyncMockOptions {
 }
 
 export interface TTSSyncMock extends TTSProvider {
-  getJob(id: string): Promise<Job>
   waitForJob(id: string, timeoutMs?: number): Promise<Job>
+  getAsset(assetId: string): Promise<Asset | undefined>
 }
 
 function sleep(ms: number): Promise<void> {
@@ -27,6 +27,8 @@ export function createTTSSyncMock(opts: TTSSyncMockOptions = {}): TTSSyncMock {
 
   const jobs = new Map<string, Job>()
   const assets = new Map<string, Asset>()
+  const listeners = new Set<(job: Job) => void>()
+  const timers = new Map<string, ReturnType<typeof setTimeout>>()
   let seq = 0
 
   function nextId(prefix: string): string {
@@ -34,14 +36,24 @@ export function createTTSSyncMock(opts: TTSSyncMockOptions = {}): TTSSyncMock {
     return `${prefix}-${Date.now().toString(36)}-${seq}`
   }
 
+  function emit(job: Job): void {
+    for (const cb of listeners) cb(job)
+  }
+
   function updateJob(job: Job): void {
     jobs.set(job.id, job)
+    emit(job)
   }
 
   async function getJob(id: string): Promise<Job> {
     const job = jobs.get(id)
     if (!job) throw new Error(`job not found: ${id}`)
     return job
+  }
+
+  function onJobUpdate(cb: (job: Job) => void): () => void {
+    listeners.add(cb)
+    return () => listeners.delete(cb)
   }
 
   async function waitForJob(id: string, timeoutMs = 5000): Promise<Job> {
@@ -52,6 +64,21 @@ export function createTTSSyncMock(opts: TTSSyncMockOptions = {}): TTSSyncMock {
       if (Date.now() - startedAt > timeoutMs) throw new Error(`waitForJob timed out: ${id}`)
       await sleep(25)
     }
+  }
+
+  async function getAsset(assetId: string): Promise<Asset | undefined> {
+    return assets.get(assetId)
+  }
+
+  async function cancelJob(id: string): Promise<Job> {
+    const job = jobs.get(id)
+    if (!job) throw new Error(`job not found: ${id}`)
+    const timer = timers.get(id)
+    if (timer) clearTimeout(timer)
+    timers.delete(id)
+    const canceled = JobSchema.parse({ ...job, status: 'canceled', progress: job.progress })
+    updateJob(canceled)
+    return canceled
   }
 
   async function synthesize(text: string, voiceId?: string): Promise<Job> {
@@ -73,9 +100,13 @@ export function createTTSSyncMock(opts: TTSSyncMockOptions = {}): TTSSyncMock {
       pluginId: 'tts-mock',
     })
     updateJob(job)
-    setTimeout(() => {
-      updateJob(JobSchema.parse({ ...job, status: 'done', progress: 100, result: { assetIds: [assetId] } }))
-    }, delayMs)
+    timers.set(
+      job.id,
+      setTimeout(() => {
+        timers.delete(job.id)
+        updateJob(JobSchema.parse({ ...job, status: 'done', progress: 100, result: { assetIds: [assetId] } }))
+      }, delayMs),
+    )
     return job
   }
 
@@ -88,7 +119,10 @@ export function createTTSSyncMock(opts: TTSSyncMockOptions = {}): TTSSyncMock {
     ],
     synthesize,
     getJob,
+    cancelJob,
+    onJobUpdate,
     waitForJob,
+    getAsset,
   }
 }
 

@@ -11,4 +11,7 @@ export interface TTSProvider {
   name: string
   voices: VoiceOption[]
   synthesize(text: string, voiceId?: string): Promise<Job>
+  getJob(id: string): Promise<Job>
+  cancelJob(id: string): Promise<Job>
+  onJobUpdate(cb: (job: Job) => void): () => void
 }

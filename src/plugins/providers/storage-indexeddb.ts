@@ -11,12 +11,14 @@ interface StoredProject extends Project {
 class DirectorDatabase extends Dexie {
   projects!: Dexie.Table<StoredProject, string>
   assets!: Dexie.Table<Asset, string>
+  blobs!: Dexie.Table<{ assetId: string; blob: Blob }, string>
 
   constructor(name: string) {
     super(name)
     this.version(1).stores({
       projects: 'id, updatedAt',
       assets: 'id, kind, source',
+      blobs: 'assetId',
     })
   }
 }
@@ -65,11 +67,12 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
 
   async function saveAsset(file: Blob | File, meta: AssetMeta): Promise<Asset> {
     const id = `asset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    const db = getDb(databaseName)
+    await db.blobs.put({ assetId: id, blob: file })
     const asset = AssetSchema.parse({
       id,
       kind: meta.kind,
       source: meta.source,
-      url: URL.createObjectURL(file),
       metadata: {
         name: meta.name,
         fileName: file instanceof File ? file.name : undefined,
@@ -77,12 +80,30 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
         type: file.type,
       },
     })
-    await getDb(databaseName).assets.put(asset)
+    await db.assets.put(asset)
     return asset
   }
 
+  const objectUrls = new Map<string, string>()
+
   async function getAssetUrl(asset: Asset): Promise<string | undefined> {
-    return asset.url ?? asset.localPath
+    if (asset.url) return asset.url
+    if (asset.localPath) return asset.localPath
+    const cached = objectUrls.get(asset.id)
+    if (cached) return cached
+    const record = await getDb(databaseName).blobs.get(asset.id)
+    if (!record) return undefined
+    const url = URL.createObjectURL(record.blob)
+    objectUrls.set(asset.id, url)
+    return url
+  }
+
+  async function revokeAssetUrl(assetId: string): Promise<void> {
+    const url = objectUrls.get(assetId)
+    if (url) {
+      URL.revokeObjectURL(url)
+      objectUrls.delete(assetId)
+    }
   }
 
   return {
@@ -94,6 +115,7 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
     deleteProject,
     saveAsset,
     getAssetUrl,
+    revokeAssetUrl,
   }
 }
 

@@ -15,6 +15,7 @@ export interface MediaMockOptions {
 
 export interface MediaMockProvider extends MediaProvider {
   waitForJob(id: string, timeoutMs?: number): Promise<Job>
+  getAsset(assetId: string): Promise<Asset | undefined>
 }
 
 function sleep(ms: number): Promise<void> {
@@ -38,6 +39,7 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
   const jobs = new Map<string, Job>()
   const assets = new Map<string, Asset>()
   const listeners = new Set<(job: Job) => void>()
+  const timers = new Map<string, ReturnType<typeof setTimeout>>()
   let seq = 0
 
   function nextId(prefix: string): string {
@@ -75,6 +77,29 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
     }
   }
 
+  async function getAsset(assetId: string): Promise<Asset | undefined> {
+    return assets.get(assetId)
+  }
+
+  async function cancelJob(id: string): Promise<Job> {
+    const job = jobs.get(id)
+    if (!job) throw new Error(`job not found: ${id}`)
+    const timer = timers.get(id)
+    if (timer) clearTimeout(timer)
+    timers.delete(id)
+    const canceled = JobSchema.parse({ ...job, status: 'canceled', progress: job.progress })
+    updateJob(canceled)
+    return canceled
+  }
+
+  function scheduleCompletion(job: Job, assetId: string): void {
+    const timer = setTimeout(() => {
+      timers.delete(job.id)
+      updateJob(JobSchema.parse({ ...job, status: 'done', progress: 100, result: { assetIds: [assetId] } }))
+    }, delayMs)
+    timers.set(job.id, timer)
+  }
+
   async function generateImage(params: TextToImageParams): Promise<Job> {
     const width = params.width ?? 512
     const height = params.height ?? 512
@@ -97,9 +122,7 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
       pluginId: 'media-mock',
     })
     updateJob(job)
-    setTimeout(() => {
-      updateJob(JobSchema.parse({ ...job, status: 'done', progress: 100, result: { assetIds: [assetId] } }))
-    }, delayMs)
+    scheduleCompletion(job, assetId)
     return job
   }
 
@@ -125,21 +148,21 @@ export function createMediaMockProvider(opts: MediaMockOptions = {}): MediaMockP
       pluginId: 'media-mock',
     })
     updateJob(job)
-    setTimeout(() => {
-      updateJob(JobSchema.parse({ ...job, status: 'done', progress: 100, result: { assetIds: [assetId] } }))
-    }, delayMs)
+    scheduleCompletion(job, assetId)
     return job
   }
 
   return {
     id: 'media-mock',
     name: 'Mock 媒体',
-    capabilities: { text2image: true, image2video: true, text2video: false, upscale: false },
+    capabilities: { text2image: true, image2video: true, text2video: true, upscale: false },
     generateImage,
     generateVideo,
     getJob,
+    cancelJob,
     onJobUpdate,
     waitForJob,
+    getAsset,
   }
 }
 
@@ -151,7 +174,7 @@ export function createMediaMockPlugin(opts?: MediaMockOptions): ProviderPlugin<M
     kind: 'provider',
     providerType: 'media',
     enabled: true,
-    capabilities: { text2image: true, image2video: true, text2video: false, upscale: false },
+    capabilities: instance.capabilities,
     instance,
   }
 }

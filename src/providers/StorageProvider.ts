@@ -21,4 +21,5 @@ export interface StorageProvider {
   deleteProject(id: string): Promise<void>
   saveAsset(file: Blob | File, meta: AssetMeta): Promise<Asset>
   getAssetUrl(asset: Asset): Promise<string | undefined>
+  revokeAssetUrl?(assetId: string): Promise<void>
 }

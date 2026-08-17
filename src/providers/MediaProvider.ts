@@ -30,5 +30,6 @@ export interface MediaProvider {
   generateImage(params: TextToImageParams): Promise<Job>
   generateVideo(params: ImageToVideoParams | TextToVideoParams): Promise<Job>
   getJob(id: string): Promise<Job>
+  cancelJob(id: string): Promise<Job>
   onJobUpdate(cb: (job: Job) => void): () => void
 }
