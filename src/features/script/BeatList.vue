@@ -261,7 +261,7 @@ async function onRewrite(beat: Beat): Promise<void> {
     <Button
       variant="outline"
       size="sm"
-      class="self-start"
+      class="w-full"
       data-test="beat-add"
       @click="addBeat"
     >
