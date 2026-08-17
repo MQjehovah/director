@@ -13,6 +13,7 @@ import {
   createTasksFeaturePlugin,
   createPipelineFeaturePlugin,
   createSettingsFeaturePlugin,
+  createAgentFeaturePlugin,
 } from './features'
 import { loadProviderConfigs } from '../features/settings/httpBackendConfig'
 
@@ -29,6 +30,7 @@ export function buildAppPlugins(): PluginRegistry {
   registry.register(createTasksFeaturePlugin())
   registry.register(createPipelineFeaturePlugin())
   registry.register(createSettingsFeaturePlugin())
+  registry.register(createAgentFeaturePlugin())
   return registry
 }
 

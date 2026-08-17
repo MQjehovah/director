@@ -22,7 +22,7 @@ describe('plugin integration', () => {
     expect(r.resolveProvider('tts')).toHaveLength(0)
   })
 
-  it('registers all seven built-in feature modules in order', () => {
+  it('registers all eight built-in feature modules in order', () => {
     const r = buildAppPlugins()
     expect(collectModules(r).map((m) => m.key)).toEqual([
       'characters',
@@ -32,6 +32,7 @@ describe('plugin integration', () => {
       'tasks',
       'pipeline',
       'settings',
+      'agent',
     ])
   })
 
@@ -79,10 +80,11 @@ describe('app shell wiring', () => {
       ['任务', 'jobs-drawer'],
       ['全流程', 'run-all'],
       ['设置', 'enabled-summary'],
+      ['AI助手', 'agent-panel'],
     ]
     const buttons = w.findAll('nav button')
     const labels = buttons.map((b) => b.text())
-    expect(labels).toEqual(['角色', '剧本', '分镜', '成片', '任务', '全流程', '设置'])
+    expect(labels).toEqual(['角色', '剧本', '分镜', '成片', '任务', '全流程', '设置', 'AI助手'])
 
     for (const [label, testId] of assertions) {
       await buttons[labels.indexOf(label)].trigger('click')

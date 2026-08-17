@@ -37,6 +37,7 @@ describe('app shell', () => {
       '任务',
       '全流程',
       '设置',
+      'AI助手',
     ])
 
     await buttons[1].trigger('click')

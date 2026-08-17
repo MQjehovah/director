@@ -17,6 +17,7 @@ export type ModuleKey =
   | 'tasks'
   | 'pipeline'
   | 'settings'
+  | 'agent'
 
 export type { FeatureModuleDef }
 export type { Component }
