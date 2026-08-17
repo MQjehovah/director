@@ -6,6 +6,7 @@ import { PluginRegistry } from './core/plugin/registry'
 import { usePluginStore } from './stores/pluginStore'
 import { saveProviderConfig } from './features/settings/httpBackendConfig'
 import AppShell from './components/layout/AppShell.vue'
+import { collectModules } from './components/layout/modules'
 
 describe('plugin integration', () => {
   beforeEach(() => {
@@ -19,6 +20,19 @@ describe('plugin integration', () => {
     expect(r.resolveProvider('llm').length).toBeGreaterThan(0)
     expect(r.resolveProvider('storage').length).toBeGreaterThan(0)
     expect(r.resolveProvider('tts').length).toBeGreaterThan(0)
+  })
+
+  it('registers all seven built-in feature modules in order', () => {
+    const r = buildAppPlugins()
+    expect(collectModules(r).map((m) => m.key)).toEqual([
+      'characters',
+      'script',
+      'storyboard',
+      'film',
+      'tasks',
+      'pipeline',
+      'settings',
+    ])
   })
 
   it('exposes every provider instance through the plugin store', () => {

@@ -1,41 +1,31 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { Component } from 'vue'
+import { computed, defineComponent, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import TopBar from './TopBar.vue'
 import SideNav from './SideNav.vue'
 import StatusBar from './StatusBar.vue'
-import { moduleTitle } from './modules'
-import CharacterPanel from '../../features/characters/CharacterPanel.vue'
-import ScriptPanel from '../../features/script/ScriptPanel.vue'
-import StoryboardPanel from '../../features/storyboard/StoryboardPanel.vue'
-import PlayerPanel from '../../features/player/PlayerPanel.vue'
-import JobDrawer from '../../features/jobs/JobDrawer.vue'
-import ComposerPanel from '../../features/composer/ComposerPanel.vue'
-import SettingsPanel from '../../features/settings/SettingsPanel.vue'
+import { usePluginStore } from '../../stores/pluginStore'
 import { useJobStore } from '../../stores/jobStore'
 
 const activeView = ref('characters')
 const contextWidth = ref(280)
 
 const jobStore = useJobStore()
+const pluginStore = usePluginStore()
 
-const viewMap: Record<string, Component> = {
-  characters: CharacterPanel,
-  script: ScriptPanel,
-  storyboard: StoryboardPanel,
-  film: PlayerPanel,
-  tasks: JobDrawer,
-  pipeline: ComposerPanel,
-  settings: SettingsPanel,
-}
+const modules = computed(() => pluginStore.featureModules())
+const viewComponent = computed(
+  () => pluginStore.featureComponent(activeView.value) ?? FallbackPanel,
+)
+const currentLabel = computed(
+  () =>
+    modules.value.find((m) => m.key === activeView.value)?.title ?? activeView.value,
+)
 
-const viewProps: Record<string, Record<string, unknown>> = {
-  tasks: { open: true, inline: true },
-}
-
-const viewComponent = computed(() => viewMap[activeView.value] ?? CharacterPanel)
-const currentLabel = computed(() => moduleTitle(activeView.value))
+const FallbackPanel = defineComponent({
+  name: 'FallbackPanel',
+  render: () => null,
+})
 
 const runningCount = computed(
   () => jobStore.jobs.filter((j) => j.status === 'running' || j.status === 'queued').length,
@@ -63,7 +53,7 @@ function startResize(e: PointerEvent) {
     <TopBar project-name="AI导演台" @settings="activeView = 'settings'" />
 
     <div class="flex min-h-0 flex-1">
-      <SideNav :active="activeView" @select="activeView = $event" />
+      <SideNav :modules="modules" :active="activeView" @select="activeView = $event" />
 
       <main class="flex min-w-0 flex-1 flex-col overflow-y-auto">
         <div
@@ -74,7 +64,7 @@ function startResize(e: PointerEvent) {
         <KeepAlive>
           <component
             :is="viewComponent"
-            v-bind="viewProps[activeView] ?? {}"
+            v-bind="pluginStore.featureViewProps(activeView) ?? {}"
             class="min-h-0 flex-1"
           />
         </KeepAlive>

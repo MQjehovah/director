@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { MODULES } from './modules'
-import type { ModuleKey } from './modules'
+import type { FeatureModuleDef } from '../../core/plugin/types'
 
 defineProps<{
+  modules: FeatureModuleDef[]
   active: string
 }>()
 
 const emit = defineEmits<{
-  (e: 'select', key: ModuleKey): void
+  (e: 'select', key: string): void
 }>()
 </script>
 
@@ -17,7 +17,7 @@ const emit = defineEmits<{
     aria-label="模块导航"
   >
     <button
-      v-for="item in MODULES"
+      v-for="item in modules"
       :key="item.key"
       type="button"
       class="rounded-md px-3 py-2 text-left text-sm transition-colors"

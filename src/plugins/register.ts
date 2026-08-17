@@ -8,6 +8,15 @@ import {
   createTTSSyncPlugin,
   createStorageIndexedDBPlugin,
 } from './providers'
+import {
+  createCharactersFeaturePlugin,
+  createScriptFeaturePlugin,
+  createStoryboardFeaturePlugin,
+  createFilmFeaturePlugin,
+  createTasksFeaturePlugin,
+  createPipelineFeaturePlugin,
+  createSettingsFeaturePlugin,
+} from './features'
 import { loadProviderConfigs } from '../features/settings/httpBackendConfig'
 
 export function buildAppPlugins(): PluginRegistry {
@@ -20,6 +29,13 @@ export function buildAppPlugins(): PluginRegistry {
   registry.register(createLLMHttpPlugin())
   registry.register(createTTSSyncPlugin())
   registry.register(createStorageIndexedDBPlugin())
+  registry.register(createCharactersFeaturePlugin())
+  registry.register(createScriptFeaturePlugin())
+  registry.register(createStoryboardFeaturePlugin())
+  registry.register(createFilmFeaturePlugin())
+  registry.register(createTasksFeaturePlugin())
+  registry.register(createPipelineFeaturePlugin())
+  registry.register(createSettingsFeaturePlugin())
   return registry
 }
 

@@ -1,9 +1,29 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { defineComponent } from 'vue'
 import { PluginRegistry } from '../../core'
-import type { ProviderPlugin } from '../../core'
+import type { FeaturePlugin, ProviderPlugin } from '../../core'
 import { createMediaMockPlugin } from '../../plugins/providers'
 import { usePluginStore } from '../pluginStore'
+
+const Panel = defineComponent({ name: 'TestPanel', render: () => null })
+
+function makeFeaturePlugin(
+  id: string,
+  order?: number,
+  viewProps?: Record<string, unknown>,
+): FeaturePlugin {
+  return {
+    id,
+    name: id,
+    kind: 'feature',
+    featureId: id,
+    enabled: true,
+    module: { key: id, label: id, title: id, order },
+    component: Panel,
+    viewProps,
+  }
+}
 
 describe('plugin store', () => {
   beforeEach(() => {
@@ -241,6 +261,46 @@ describe('plugin store', () => {
       expect(s.resolveInstanceCapability<{ id: string }>('media', 'text2image')?.id).toBe(
         'media-other',
       )
+    })
+  })
+
+  describe('feature module accessors', () => {
+    it('returns no features before init and the registered ones after init', () => {
+      const s = usePluginStore()
+      expect(s.features()).toEqual([])
+      expect(s.featureModules()).toEqual([])
+      const r = new PluginRegistry()
+      r.register(makeFeaturePlugin('a'))
+      s.init(r)
+      expect(s.features().map((p) => p.featureId)).toEqual(['a'])
+      expect(s.featureModules().map((m) => m.key)).toEqual(['a'])
+    })
+
+    it('collects feature modules sorted by order', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(makeFeaturePlugin('b', 2))
+      r.register(makeFeaturePlugin('a', 1))
+      s.init(r)
+      expect(s.featureModules().map((m) => m.key)).toEqual(['a', 'b'])
+    })
+
+    it('resolves the feature component by module key', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(makeFeaturePlugin('a'))
+      s.init(r)
+      expect(s.featureComponent('a')).toBe(Panel)
+      expect(s.featureComponent('missing')).toBeUndefined()
+    })
+
+    it('resolves the feature view props by module key', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(makeFeaturePlugin('a', 1, { open: true }))
+      s.init(r)
+      expect(s.featureViewProps('a')).toEqual({ open: true })
+      expect(s.featureViewProps('missing')).toBeUndefined()
     })
   })
 })

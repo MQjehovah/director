@@ -1,3 +1,5 @@
+import type { Component } from 'vue'
+
 export type PluginKind = 'provider' | 'feature' | 'pipeline'
 
 export type ProviderType = 'media' | 'llm' | 'tts' | 'storage'
@@ -26,9 +28,19 @@ export interface ProviderPlugin<T = unknown> extends PluginBase {
   instance?: T
 }
 
+export interface FeatureModuleDef {
+  key: string
+  label: string
+  title: string
+  order?: number
+}
+
 export interface FeaturePlugin extends PluginBase {
   kind: 'feature'
   featureId: string
+  module?: FeatureModuleDef
+  component: Component
+  viewProps?: Record<string, unknown>
 }
 
 export interface PipelinePlugin extends PluginBase {

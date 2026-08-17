@@ -1,11 +1,24 @@
 import { defineStore } from 'pinia'
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, shallowRef } from 'vue'
+import type { Component } from 'vue'
 import { PluginRegistry } from '../core/plugin/registry'
-import type { MediaCapability, Plugin, ProviderPlugin, ProviderType } from '../core/plugin/types'
+import type {
+  FeatureModuleDef,
+  FeaturePlugin,
+  MediaCapability,
+  Plugin,
+  ProviderPlugin,
+  ProviderType,
+} from '../core/plugin/types'
+import {
+  collectModules,
+  resolveFeatureComponent,
+  resolveFeatureViewProps,
+} from '../components/layout/modules'
 import type { LLMProvider, MediaProvider, StorageProvider, TTSProvider } from '../providers'
 
 export const usePluginStore = defineStore('plugin', () => {
-  const registry = ref<PluginRegistry | null>(null)
+  const registry = shallowRef<PluginRegistry | null>(null)
   const activeProviders = ref<Partial<Record<ProviderType, string>>>({})
   const enabledState = reactive<Record<string, boolean>>({})
   let unsubscribe: (() => void) | undefined
@@ -123,6 +136,30 @@ export const usePluginStore = defineStore('plugin', () => {
 
   const plugins = computed<Plugin[]>(() => registry.value?.list() ?? [])
 
+  function features(): FeaturePlugin[] {
+    const r = registry.value
+    if (!r) return []
+    return r.list().filter((p): p is FeaturePlugin => p.kind === 'feature')
+  }
+
+  function featureModules(): FeatureModuleDef[] {
+    const r = registry.value
+    if (!r) return []
+    return collectModules(r)
+  }
+
+  function featureComponent(key: string): Component | undefined {
+    const r = registry.value
+    if (!r) return undefined
+    return resolveFeatureComponent(r, key)
+  }
+
+  function featureViewProps(key: string): Record<string, unknown> | undefined {
+    const r = registry.value
+    if (!r) return undefined
+    return resolveFeatureViewProps(r, key)
+  }
+
   return {
     activeProviders,
     init,
@@ -139,5 +176,9 @@ export const usePluginStore = defineStore('plugin', () => {
     ttsProvider,
     storageProvider,
     plugins,
+    features,
+    featureModules,
+    featureComponent,
+    featureViewProps,
   }
 })

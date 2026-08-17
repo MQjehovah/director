@@ -1,3 +1,8 @@
+import type { Component } from 'vue'
+import type { PluginRegistry } from '../../core/plugin/registry'
+import type { FeatureModuleDef, FeaturePlugin } from '../../core/plugin/types'
+
+/** 内置模块键（历史兼容：模块已动态化，AppShell 使用 string 键） */
 export type ModuleKey =
   | 'characters'
   | 'script'
@@ -7,22 +12,30 @@ export type ModuleKey =
   | 'pipeline'
   | 'settings'
 
-export interface ModuleDef {
-  key: ModuleKey
-  label: string
-  title: string
+export function collectModules(registry: PluginRegistry): FeatureModuleDef[] {
+  return registry
+    .list()
+    .filter((p): p is FeaturePlugin => p.kind === 'feature' && p.module !== undefined)
+    .map((p) => p.module as FeatureModuleDef)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 }
 
-export const MODULES: ModuleDef[] = [
-  { key: 'characters', label: '角色', title: '角色管理' },
-  { key: 'script', label: '剧本', title: '剧本编辑器' },
-  { key: 'storyboard', label: '分镜', title: '分镜设计' },
-  { key: 'film', label: '成片', title: '成片合成' },
-  { key: 'tasks', label: '任务', title: '任务中心' },
-  { key: 'pipeline', label: '全流程', title: '全流程' },
-  { key: 'settings', label: '设置', title: '设置' },
-]
+export function resolveFeatureComponent(
+  registry: PluginRegistry,
+  key: string,
+): Component | undefined {
+  const p = registry
+    .list()
+    .find((p): p is FeaturePlugin => p.kind === 'feature' && p.module?.key === key)
+  return p?.component
+}
 
-export function moduleTitle(key: string): string {
-  return MODULES.find((m) => m.key === key)?.title ?? key
+export function resolveFeatureViewProps(
+  registry: PluginRegistry,
+  key: string,
+): Record<string, unknown> | undefined {
+  const p = registry
+    .list()
+    .find((p): p is FeaturePlugin => p.kind === 'feature' && p.module?.key === key)
+  return p?.viewProps
 }
