@@ -5,7 +5,7 @@ import {
   listWorkflowTemplates,
   saveWorkflowTemplate,
 } from '../../comfyui/workflowStore'
-import { loadProviderConfig } from '../httpBackendConfig'
+import { loadProviderConfig, saveProviderConfig } from '../httpBackendConfig'
 import { MEDIA_COMFYUI_ID } from '../../../plugins/providers/media-comfyui'
 
 function linkedGraphJson(): string {
@@ -67,5 +67,16 @@ describe('WorkflowTemplateManager', () => {
     const w = mount(WorkflowTemplateManager)
     await w.get('[data-test="wf-use"]').trigger('click')
     expect(loadProviderConfig(MEDIA_COMFYUI_ID)?.workflowTemplateId).toBe('cur')
+  })
+
+  it('设为当前 preserves the existing provider config (baseUrl 等不被覆盖)', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188', apiKey: 'sk-x' })
+    saveWorkflowTemplate({ id: 'cur', name: '当前模板', graphJson: '{}' })
+    const w = mount(WorkflowTemplateManager)
+    await w.get('[data-test="wf-use"]').trigger('click')
+    const config = loadProviderConfig(MEDIA_COMFYUI_ID)
+    expect(config?.workflowTemplateId).toBe('cur')
+    expect(config?.baseUrl).toBe('http://127.0.0.1:8188')
+    expect(config?.apiKey).toBe('sk-x')
   })
 })

@@ -8,7 +8,7 @@ import {
   saveWorkflowTemplate,
 } from '../comfyui/workflowStore'
 import type { WorkflowTemplate } from '../comfyui/workflowStore'
-import { saveProviderConfig } from './httpBackendConfig'
+import { saveProviderConfig, loadProviderConfig } from './httpBackendConfig'
 import { MEDIA_COMFYUI_ID } from '../../plugins/providers/media-comfyui'
 
 const name = ref('')
@@ -48,7 +48,11 @@ function onDelete(id: string): void {
 }
 
 function onUse(id: string): void {
-  saveProviderConfig(MEDIA_COMFYUI_ID, { workflowTemplateId: id })
+  // 合并写入，避免覆盖已填写的 baseUrl/apiKey/model 等配置
+  saveProviderConfig(MEDIA_COMFYUI_ID, {
+    ...loadProviderConfig(MEDIA_COMFYUI_ID),
+    workflowTemplateId: id,
+  })
   message.value = { kind: 'success', text: '已设为当前 ComfyUI 模板' }
 }
 </script>
