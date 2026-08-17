@@ -9,6 +9,9 @@ export class PluginRegistry {
     if (this.plugins.has(p.id)) {
       throw new Error(`plugin already registered: ${p.id}`)
     }
+    if (p.kind === 'feature' && p.module !== undefined && p.component === undefined) {
+      throw new Error(`feature plugin with module must provide a component: ${p.id}`)
+    }
     this.plugins.set(p.id, p)
     this.bus.emit('plugin:registered', p)
   }

@@ -74,4 +74,17 @@ describe('plugin registry', () => {
     r.register({ id: 'f2', name: 'F2', kind: 'feature', featureId: 'shots', enabled: true } as FeaturePlugin)
     expect(spy).toHaveBeenCalledTimes(1)
   })
+  it('rejects a feature plugin with a module but no component', () => {
+    const r = new PluginRegistry()
+    expect(() =>
+      r.register({
+        id: 'f3',
+        name: 'F3',
+        kind: 'feature',
+        featureId: 'x',
+        enabled: true,
+        module: { key: 'x', label: 'X', title: 'X' },
+      } as FeaturePlugin),
+    ).toThrow('component')
+  })
 })

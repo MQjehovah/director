@@ -14,7 +14,7 @@ import {
   collectModules,
   resolveFeatureComponent,
   resolveFeatureViewProps,
-} from '../components/layout/modules'
+} from '../core/plugin/features'
 import type { LLMProvider, MediaProvider, StorageProvider, TTSProvider } from '../providers'
 
 export const usePluginStore = defineStore('plugin', () => {

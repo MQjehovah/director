@@ -32,11 +32,11 @@ describe('module collection from the plugin registry', () => {
     expect(collectModules(r).map((m) => m.key)).toEqual(['a', 'b', 'c'])
   })
 
-  it('sorts modules with no order before ordered modules', () => {
+  it('sorts modules with no order after ordered modules', () => {
     const r = new PluginRegistry()
     r.register(makeFeature('later', { key: 'later', label: 'L', title: 'L', order: 5 }))
     r.register(makeFeature('early', { key: 'early', label: 'E', title: 'E' }))
-    expect(collectModules(r).map((m) => m.key)).toEqual(['early', 'later'])
+    expect(collectModules(r).map((m) => m.key)).toEqual(['later', 'early'])
   })
 
   it('ignores feature plugins without a module and provider plugins', () => {
