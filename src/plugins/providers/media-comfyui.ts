@@ -157,15 +157,6 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
   }
 
   /** 轮询前确认任务未被取消：避免「取消 → 完成」竞态覆盖 canceled 状态 */
-  async function isCanceled(id: string): Promise<boolean> {
-    try {
-      const job = await ctrl.getJob(id)
-      return job.status === 'canceled'
-    } catch {
-      return false
-    }
-  }
-
   async function pollTask(id: string): Promise<void> {
     const { baseUrl } = readConfig()
     try {
@@ -177,21 +168,17 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       const status = entry.status?.status_str
       const completed = entry.status?.completed === true
       if (status === 'error') {
-        if (await isCanceled(id)) return
-        ctrl.stopPoller(id)
-        ctrl.patchJob(id, { status: 'failed', progress: 100 })
+        // 终态后 patchJob 会忽略写入，这里用 fail 统一处理（含 stopPoller）
+        ctrl.fail(id, 'ComfyUI 执行出错')
         return
       }
       if (!completed || !entry.outputs) {
-        if (await isCanceled(id)) return
         ctrl.patchJob(id, { status: 'running', progress: 50 })
         return
       }
       const images = Object.values(entry.outputs).flatMap((o) => o.images ?? [])
       if (images.length === 0) {
-        if (await isCanceled(id)) return
-        ctrl.stopPoller(id)
-        ctrl.patchJob(id, { status: 'failed', progress: 100 })
+        ctrl.fail(id, 'ComfyUI 未返回图像')
         return
       }
       const assetId = nextId('asset')
@@ -204,17 +191,10 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
         metadata: { mime },
       })
       assets.set(assetId, asset)
-      if (await isCanceled(id)) return
       ctrl.stopPoller(id)
       ctrl.patchJob(id, { status: 'done', progress: 100, result: { assetIds: [assetId] } })
     } catch (err) {
-      if (await isCanceled(id)) return
-      ctrl.stopPoller(id)
-      ctrl.patchJob(id, {
-        status: 'failed',
-        progress: 100,
-        result: { data: { error: err instanceof Error ? err.message : String(err) } },
-      })
+      ctrl.fail(id, err instanceof Error ? err.message : String(err))
     }
   }
 

@@ -17,6 +17,8 @@ export interface JobController {
   setJob(job: JobInput): void
   patchJob(id: string, patch: Partial<Job>): void
   reportProgress(id: string, p: number): void
+  isTerminal(id: string): Promise<boolean>
+  fail(id: string, message: string): void
   startPoller(id: string, poll: () => Promise<void>, intervalMs?: number): void
   stopPoller(id: string): void
 }
@@ -67,6 +69,13 @@ export function createJobController(opts: JobControllerOptions = {}): JobControl
     return current
   }
 
+  const TERMINAL_STATUSES: ReadonlySet<Job['status']> = new Set(['done', 'failed', 'canceled'])
+
+  /** 任务是否已到达终态 */
+  function isTerminalStatus(status: Job['status']): boolean {
+    return TERMINAL_STATUSES.has(status)
+  }
+
   function setJob(job: JobInput): void {
     const parsed = JobSchema.parse(job)
     jobs.set(parsed.id, parsed)
@@ -76,12 +85,33 @@ export function createJobController(opts: JobControllerOptions = {}): JobControl
   function patchJob(id: string, patch: Partial<Job>): void {
     const current = jobs.get(id)
     if (!current) throw new Error(`job not found: ${id}`)
+    // 终态不变性：任务 done/failed/canceled 后忽略后续写入，
+    // 防止迟到的轮询响应把已完成的（或已取消的）任务改回 running/done
+    if (isTerminalStatus(current.status)) return
     // 固定 id：即使 patch 误带其他 id 也不会把任务复制到新 id
     setJob({ ...current, ...patch, id })
   }
 
   function reportProgress(id: string, p: number): void {
     patchJob(id, { progress: p })
+  }
+
+  async function isTerminal(id: string): Promise<boolean> {
+    const job = jobs.get(id)
+    return job ? isTerminalStatus(job.status) : true
+  }
+
+  /** 标记任务失败（若仍处非终态），附带错误信息 */
+  function fail(id: string, message: string): void {
+    const job = jobs.get(id)
+    if (!job) return
+    if (isTerminalStatus(job.status)) return
+    stopPoller(id)
+    patchJob(id, {
+      status: 'failed',
+      progress: 100,
+      result: { data: { error: message } },
+    })
   }
 
   function startPoller(id: string, poll: () => Promise<void>, intervalMs?: number): void {
@@ -111,6 +141,8 @@ export function createJobController(opts: JobControllerOptions = {}): JobControl
     setJob,
     patchJob,
     reportProgress,
+    isTerminal,
+    fail,
     startPoller,
     stopPoller,
   }

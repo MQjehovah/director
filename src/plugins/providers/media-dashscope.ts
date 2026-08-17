@@ -69,16 +69,6 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
     return `${baseUrl.replace(/\/$/, '')}/tasks/${id}`
   }
 
-  /** 轮询前确认任务未被取消：避免「取消 → 完成」竞态覆盖 canceled 状态 */
-  async function isCanceled(id: string): Promise<boolean> {
-    try {
-      const job = await ctrl.getJob(id)
-      return job.status === 'canceled'
-    } catch {
-      return false
-    }
-  }
-
   async function pollTask(id: string): Promise<void> {
     const { apiKey, baseUrl } = readConfig()
     try {
@@ -93,16 +83,14 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
       const status = data.output?.task_status
       if (!status) throw new Error('DashScope 返回缺少 task_status')
       if (status === 'PENDING' || status === 'RUNNING') {
-        if (await isCanceled(id)) return
         ctrl.patchJob(id, { status: 'running', progress: 30 })
         return
       }
-      if (await isCanceled(id)) return
-      ctrl.stopPoller(id)
       if (status === 'SUCCEEDED') {
+        ctrl.stopPoller(id)
         const urls = (data.output.results ?? []).map((r) => r.url).filter(Boolean) as string[]
         if (urls.length === 0) {
-          ctrl.patchJob(id, { status: 'failed', progress: 100 })
+          ctrl.fail(id, 'DashScope 成功但未返回图像 URL')
           return
         }
         const assetId = nextId('asset')
@@ -117,23 +105,9 @@ export function createMediaDashScopeProvider(opts: MediaDashScopeOptions = {}): 
         return
       }
       // FAILED / CANCELED / UNKNOWN
-      ctrl.patchJob(id, {
-        status: 'failed',
-        progress: 100,
-        result: {
-          data: {
-            error: data.output?.results?.[0]?.message ?? data.message ?? status,
-          },
-        },
-      })
+      ctrl.fail(id, data.output?.results?.[0]?.message ?? data.message ?? status)
     } catch (err) {
-      if (await isCanceled(id)) return
-      ctrl.stopPoller(id)
-      ctrl.patchJob(id, {
-        status: 'failed',
-        progress: 100,
-        result: { data: { error: err instanceof Error ? err.message : String(err) } },
-      })
+      ctrl.fail(id, err instanceof Error ? err.message : String(err))
     }
   }
 

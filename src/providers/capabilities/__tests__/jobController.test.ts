@@ -146,4 +146,55 @@ describe('createJobController', () => {
     await vi.advanceTimersByTimeAsync(300)
     expect(poll.mock.calls.length).toBe(calls)
   })
+
+  it('patchJob ignores writes after the job reaches a terminal state', async () => {
+    const ctrl = createJobController()
+    ctrl.setJob({ id: 'j1', type: 'text2image', status: 'running', progress: 20 })
+    ctrl.patchJob('j1', { status: 'done', progress: 100, result: { assetIds: ['a1'] } })
+    // 迟到的轮询响应试图把已完成任务改回 running
+    ctrl.patchJob('j1', { status: 'running', progress: 50 })
+    const job = await ctrl.getJob('j1')
+    expect(job.status).toBe('done')
+    expect(job.progress).toBe(100)
+    expect(job.result?.assetIds).toEqual(['a1'])
+  })
+
+  it('patchJob ignores writes after cancel', async () => {
+    const ctrl = createJobController()
+    ctrl.setJob({ id: 'j1', type: 'text2image', status: 'running' })
+    await ctrl.cancelJob('j1')
+    ctrl.patchJob('j1', { status: 'done', progress: 100, result: { assetIds: ['a1'] } })
+    expect((await ctrl.getJob('j1')).status).toBe('canceled')
+  })
+
+  it('isTerminal reports the terminal state', async () => {
+    const ctrl = createJobController()
+    ctrl.setJob({ id: 'j1', type: 'text2image', status: 'running' })
+    expect(await ctrl.isTerminal('j1')).toBe(false)
+    ctrl.setJob({ id: 'j2', type: 'text2image', status: 'done' })
+    expect(await ctrl.isTerminal('j2')).toBe(true)
+    expect(await ctrl.isTerminal('missing')).toBe(true)
+  })
+
+  it('fail marks the job failed with error and stops the poller', async () => {
+    vi.useFakeTimers()
+    const ctrl = createJobController({ pollIntervalMs: 100 })
+    ctrl.setJob({ id: 'j1', type: 'text2image', status: 'running' })
+    const poll = vi.fn().mockResolvedValue(undefined)
+    ctrl.startPoller('j1', poll)
+    ctrl.fail('j1', '出错了')
+    const job = await ctrl.getJob('j1')
+    expect(job.status).toBe('failed')
+    expect(job.result?.data?.error).toBe('出错了')
+    const calls = poll.mock.calls.length
+    await vi.advanceTimersByTimeAsync(250)
+    expect(poll.mock.calls.length).toBe(calls)
+  })
+
+  it('fail is a no-op after a terminal state', async () => {
+    const ctrl = createJobController()
+    ctrl.setJob({ id: 'j1', type: 'text2image', status: 'done' })
+    ctrl.fail('j1', '不应覆盖')
+    expect((await ctrl.getJob('j1')).status).toBe('done')
+  })
 })
