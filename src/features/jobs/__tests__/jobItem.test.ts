@@ -8,11 +8,11 @@ import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useShotActions } from '../../storyboard/useShotActions'
 import { PluginRegistry } from '../../../core'
-import { createMediaMockPlugin } from '../../../plugins/providers'
+import { createStubMediaPlugin } from '../../shared/__tests__/stubProviders'
 
 function initMedia(delayMs = 30): void {
   const registry = new PluginRegistry()
-  registry.register(createMediaMockPlugin({ delayMs }))
+  registry.register(createStubMediaPlugin({ delayMs }))
   usePluginStore().init(registry)
 }
 
@@ -84,7 +84,7 @@ describe('job item', () => {
       status: 'failed',
       progress: 20,
       shotRef: shot.id,
-      pluginId: 'media-mock',
+      pluginId: 'stub-media',
     })
     const w = mount(JobItem, { props: { jobId: 'old' } })
     await w.get('[data-test="job-retry"]').trigger('click')
@@ -115,7 +115,7 @@ describe('job item', () => {
     const jobs = useJobStore()
     const shot = storyboard.addShot({ shotType: 'image', prompt: '一只黑猫' })
     const job = await useShotActions().generateMedia(shot.id)
-    expect(job?.pluginId).toBe('media-mock')
+    expect(job?.pluginId).toBe('stub-media')
     const w = mount(JobItem, { props: { jobId: job?.id ?? '' } })
     await w.get('[data-test="job-cancel"]').trigger('click')
     await flushPromises()

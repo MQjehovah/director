@@ -13,11 +13,13 @@ import {
   saveProviderConfig,
 } from '../httpBackendConfig'
 import {
-  createLLMMockPlugin,
-  createMediaMockPlugin,
   createStorageIndexedDBPlugin,
-  createTTSSyncPlugin,
 } from '../../../plugins/providers'
+import {
+  createStubLLMPlugin,
+  createStubMediaPlugin,
+  createStubTTSPlugin,
+} from '../../shared/__tests__/stubProviders'
 import { saveWorkflowTemplate } from '../../../features/comfyui/workflowStore'
 
 const STORAGE_PREFIX = 'ai-director:provider:'
@@ -41,9 +43,9 @@ function initStore(provider: ProviderPlugin): void {
 
 function initAllProviders(): void {
   const registry = new PluginRegistry()
-  registry.register(createMediaMockPlugin())
-  registry.register(createLLMMockPlugin())
-  registry.register(createTTSSyncPlugin())
+  registry.register(createStubMediaPlugin())
+  registry.register(createStubLLMPlugin())
+  registry.register(createStubTTSPlugin())
   registry.register(createStorageIndexedDBPlugin())
   usePluginStore().init(registry)
 }

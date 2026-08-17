@@ -3,7 +3,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { defineComponent } from 'vue'
 import { PluginRegistry } from '../../core'
 import type { FeaturePlugin, ProviderPlugin } from '../../core'
-import { createMediaMockPlugin } from '../../plugins/providers'
+import { createStubMediaPlugin } from '../../features/shared/__tests__/stubProviders'
 import { usePluginStore } from '../pluginStore'
 
 const Panel = defineComponent({ name: 'TestPanel', render: () => null })
@@ -38,27 +38,27 @@ describe('plugin store', () => {
   it('exposes enabled providers after init', () => {
     const s = usePluginStore()
     const r = new PluginRegistry()
-    r.register(createMediaMockPlugin())
+    r.register(createStubMediaPlugin())
     s.init(r)
-    expect(s.mediaProvider?.id).toBe('media-mock')
+    expect(s.mediaProvider?.id).toBe('stub-media')
     expect(s.enabledProviders('media')).toHaveLength(1)
-    expect(s.isEnabled('media-mock')).toBe(true)
+    expect(s.isEnabled('stub-media')).toBe(true)
   })
   it('toggle disables and re-enables a provider', () => {
     const s = usePluginStore()
     const r = new PluginRegistry()
-    r.register(createMediaMockPlugin())
+    r.register(createStubMediaPlugin())
     s.init(r)
-    s.toggle('media-mock', false)
-    expect(s.isEnabled('media-mock')).toBe(false)
+    s.toggle('stub-media', false)
+    expect(s.isEnabled('stub-media')).toBe(false)
     expect(s.mediaProvider).toBeUndefined()
-    s.toggle('media-mock', true)
-    expect(s.mediaProvider?.id).toBe('media-mock')
+    s.toggle('stub-media', true)
+    expect(s.mediaProvider?.id).toBe('stub-media')
   })
   it('setActiveProvider prefers the selected provider', () => {
     const s = usePluginStore()
     const r = new PluginRegistry()
-    r.register(createMediaMockPlugin())
+    r.register(createStubMediaPlugin())
     r.register({
       id: 'media-other',
       name: 'Other Media',
@@ -75,12 +75,12 @@ describe('plugin store', () => {
   it('getProviderInstance resolves a provider instance by id', () => {
     const s = usePluginStore()
     const r = new PluginRegistry()
-    r.register(createMediaMockPlugin())
+    r.register(createStubMediaPlugin())
     s.init(r)
-    expect(s.getProviderInstance('media-mock')).toBeDefined()
+    expect(s.getProviderInstance('stub-media')).toBeDefined()
     expect(s.getProviderInstance('missing')).toBeUndefined()
-    s.toggle('media-mock', false)
-    expect(s.getProviderInstance('media-mock')).toBeUndefined()
+    s.toggle('stub-media', false)
+    expect(s.getProviderInstance('stub-media')).toBeUndefined()
   })
 
   describe('capability resolution', () => {
@@ -136,7 +136,7 @@ describe('plugin store', () => {
     it('resolveProviderCapability prefers the active provider when it has the capability', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       r.register({
         id: 'media-other',
         name: 'Other Media',
@@ -154,7 +154,7 @@ describe('plugin store', () => {
     it('resolveProviderCapability falls back when the active provider lacks the capability', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       r.register({
         id: 'media-video',
         name: 'Video Media',
@@ -167,13 +167,13 @@ describe('plugin store', () => {
       s.init(r)
       s.setActiveProvider('media', 'media-video')
       expect(s.resolveProviderCapability('media', 'image2video')?.id).toBe('media-video')
-      expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('media-mock')
+      expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('stub-media')
     })
 
     it('resolveInstanceCapability falls back when the preferred provider has no instance', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       r.register({
         id: 'media-no-instance',
         name: 'No Instance Media',
@@ -184,13 +184,13 @@ describe('plugin store', () => {
       })
       s.init(r)
       s.setActiveProvider('media', 'media-no-instance')
-      expect((s.resolveInstanceCapability('media', 'text2image') as { id: string } | undefined)?.id).toBe('media-mock')
+      expect((s.resolveInstanceCapability('media', 'text2image') as { id: string } | undefined)?.id).toBe('stub-media')
     })
 
     it('resolveProviderCapability skips disabled providers', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       r.register({
         id: 'media-other',
         name: 'Other Media',
@@ -202,15 +202,15 @@ describe('plugin store', () => {
       s.init(r)
       s.setActiveProvider('media', 'media-other')
       s.toggle('media-other', false)
-      expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('media-mock')
-      s.toggle('media-mock', false)
+      expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('stub-media')
+      s.toggle('stub-media', false)
       expect(s.resolveProviderCapability('media', 'text2image')).toBeUndefined()
     })
 
     it('resolveProviderCapability returns undefined when no enabled provider has the capability', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       s.init(r)
       expect(s.resolveProviderCapability('media', 'upscale')).toBeUndefined()
     })
@@ -218,7 +218,7 @@ describe('plugin store', () => {
     it('resolveProviderCapability works with the new array capabilities shape', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       r.register({
         id: 'media-array',
         name: 'Array Media',
@@ -236,17 +236,17 @@ describe('plugin store', () => {
     it('resolveInstanceCapability returns the instance of the resolved provider', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       s.init(r)
       const instance = s.resolveInstanceCapability<{ id: string }>('media', 'text2image')
-      expect(instance?.id).toBe('media-mock')
+      expect(instance?.id).toBe('stub-media')
       expect(s.resolveInstanceCapability('media', 'upscale')).toBeUndefined()
     })
 
-    it('resolveInstanceCapability honors the active provider', () => {
+    it('resolveInstanceCapability resolves by explicit provider id', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
-      r.register(createMediaMockPlugin())
+      r.register(createStubMediaPlugin())
       r.register({
         id: 'media-other',
         name: 'Other Media',
@@ -258,8 +258,12 @@ describe('plugin store', () => {
       })
       s.init(r)
       s.setActiveProvider('media', 'media-other')
+      expect(
+        s.resolveInstanceCapability<{ id: string }>('media', 'text2image', 'media-other')?.id,
+      ).toBe('media-other')
+      // 未指定 providerId 时取第一个启用的、具备该能力的 Provider
       expect(s.resolveInstanceCapability<{ id: string }>('media', 'text2image')?.id).toBe(
-        'media-other',
+        'stub-media',
       )
     })
   })

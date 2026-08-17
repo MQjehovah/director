@@ -19,7 +19,7 @@ describe('plugin integration', () => {
     expect(r.resolveProvider('media').length).toBeGreaterThan(0)
     expect(r.resolveProvider('llm').length).toBeGreaterThan(0)
     expect(r.resolveProvider('storage').length).toBeGreaterThan(0)
-    expect(r.resolveProvider('tts').length).toBeGreaterThan(0)
+    expect(r.resolveProvider('tts')).toHaveLength(0)
   })
 
   it('registers all seven built-in feature modules in order', () => {
@@ -39,23 +39,23 @@ describe('plugin integration', () => {
     setActivePinia(createPinia())
     const store = usePluginStore()
     store.init(buildAppPlugins())
-    expect(store.mediaProvider?.id).toBe('media-mock')
-    expect(store.llmProvider?.id).toBe('llm-mock')
-    expect(store.ttsProvider?.id).toBe('tts-mock')
+    expect(store.mediaProvider?.id).toBe('media-comfyui')
+    expect(store.llmProvider?.id).toBe('llm-http')
+    expect(store.ttsProvider).toBeUndefined()
     expect(store.storageProvider?.id).toBe('storage-indexeddb')
   })
 
   it('applySavedProviderConfig disables providers whose saved config is off', () => {
     setActivePinia(createPinia())
-    saveProviderConfig('media-mock', { enabled: false })
+    saveProviderConfig('media-comfyui', { enabled: false })
     const store = usePluginStore()
     store.init(buildAppPlugins())
-    expect(store.isEnabled('media-mock')).toBe(true)
+    expect(store.isEnabled('media-comfyui')).toBe(true)
     applySavedProviderConfig(store)
-    expect(store.isEnabled('media-mock')).toBe(false)
-    // 禁用了 mock 后，media 能力回退到下一个启用的插件（ComfyUI）
-    expect(store.mediaProvider?.id).toBe('media-comfyui')
-    expect(store.llmProvider?.id).toBe('llm-mock')
+    expect(store.isEnabled('media-comfyui')).toBe(false)
+    // 禁用了 comfyui 后，media 能力回退到下一个启用的插件（DashScope）
+    expect(store.mediaProvider?.id).toBe('media-dashscope')
+    expect(store.llmProvider?.id).toBe('llm-http')
   })
 })
 

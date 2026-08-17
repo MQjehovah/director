@@ -9,11 +9,11 @@ import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useScriptFeatures } from '../useScriptFeatures'
 import { PluginRegistry } from '../../../core'
-import { createLLMMockPlugin } from '../../../plugins/providers'
+import { createStubLLMPlugin } from '../../shared/__tests__/stubProviders'
 
 function initProviders(types: Array<'llm'>): void {
   const registry = new PluginRegistry()
-  if (types.includes('llm')) registry.register(createLLMMockPlugin())
+  if (types.includes('llm')) registry.register(createStubLLMPlugin())
   usePluginStore().init(registry)
 }
 

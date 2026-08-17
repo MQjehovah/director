@@ -12,7 +12,11 @@ import {
   assembleStep,
   presetPipeline,
 } from '../presetSteps'
-import { createMediaMockProvider, createLLMMockPlugin, createTTSSyncPlugin } from '../../../plugins/providers'
+import {
+  createStubLLMPlugin,
+  createStubMediaPlugin,
+  createStubTTSPlugin,
+} from '../../shared/__tests__/stubProviders'
 import { PluginRegistry } from '../../../core'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useScriptStore } from '../../../stores/scriptStore'
@@ -23,20 +27,9 @@ import ComposerPanel from '../ComposerPanel.vue'
 
 function initProviders(opts: { llm?: boolean; media?: boolean; tts?: boolean } = {}): void {
   const registry = new PluginRegistry()
-  if (opts.llm) registry.register(createLLMMockPlugin())
-  if (opts.media) {
-    const provider = createMediaMockProvider({ delayMs: 20 })
-    registry.register({
-      id: 'media-mock',
-      name: 'Mock 媒体',
-      kind: 'provider',
-      providerType: 'media',
-      enabled: true,
-      capabilities: provider.capabilities,
-      instance: provider,
-    })
-  }
-  if (opts.tts) registry.register(createTTSSyncPlugin({ delayMs: 10 }))
+  if (opts.llm) registry.register(createStubLLMPlugin())
+  if (opts.media) registry.register(createStubMediaPlugin({ delayMs: 20 }))
+  if (opts.tts) registry.register(createStubTTSPlugin())
   usePluginStore().init(registry)
 }
 

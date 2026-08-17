@@ -13,11 +13,11 @@ import { JobSchema } from '../../../core/models'
 import type { MediaCapability } from '../../../core'
 import { PluginRegistry } from '../../../core'
 import { createJobController } from '../../../providers/capabilities'
-import { createMediaMockPlugin } from '../../../plugins/providers'
+import { createStubMediaPlugin } from '../../shared/__tests__/stubProviders'
 
 function initMedia(delayMs = 30): void {
   const registry = new PluginRegistry()
-  registry.register(createMediaMockPlugin({ delayMs }))
+  registry.register(createStubMediaPlugin({ delayMs }))
   usePluginStore().init(registry)
 }
 

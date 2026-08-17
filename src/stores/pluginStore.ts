@@ -106,21 +106,25 @@ export const usePluginStore = defineStore('plugin', () => {
   function resolveInstanceCapability<T = unknown>(
     type: ProviderType,
     cap: MediaCapability,
+    providerId?: string,
   ): T | undefined {
     const r = registry.value
     if (!r) return undefined
-    const preferredId = activeProviders.value[type]
-    if (preferredId) {
-      const preferred = r.getProvider(preferredId)
+    // 指定 Provider 时按 id 精确解析
+    if (providerId) {
+      const p = r.getProvider(providerId)
       if (
-        preferred &&
-        enabledState[preferred.id] &&
-        hasCapability(preferred, cap) &&
-        preferred.instance !== undefined
+        p &&
+        p.providerType === type &&
+        enabledState[p.id] &&
+        hasCapability(p, cap) &&
+        p.instance !== undefined
       ) {
-        return preferred.instance as T
+        return p.instance as T
       }
+      return undefined
     }
+    // 未指定时取第一个启用的、具备该能力的 Provider
     const fallback = enabledProviders(type).find(
       (p) => hasCapability(p, cap) && p.instance !== undefined,
     )

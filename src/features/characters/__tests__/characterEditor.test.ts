@@ -10,12 +10,15 @@ import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useCharacterFeatures } from '../useCharacterFeatures'
 import { PluginRegistry } from '../../../core'
-import { createLLMMockPlugin, createMediaMockPlugin } from '../../../plugins/providers'
+import {
+  createStubLLMPlugin,
+  createStubMediaPlugin,
+} from '../../shared/__tests__/stubProviders'
 
 function initProviders(types: Array<'llm' | 'media' | 'storage'>): void {
   const registry = new PluginRegistry()
-  if (types.includes('llm')) registry.register(createLLMMockPlugin())
-  if (types.includes('media')) registry.register(createMediaMockPlugin({ delayMs: 10 }))
+  if (types.includes('llm')) registry.register(createStubLLMPlugin())
+  if (types.includes('media')) registry.register(createStubMediaPlugin({ delayMs: 10 }))
   if (types.includes('storage')) {
     registry.register({
       id: 'storage-stub',

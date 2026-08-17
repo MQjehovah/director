@@ -1,11 +1,8 @@
 import { PluginRegistry } from '../core/plugin/registry'
 import {
-  createMediaMockPlugin,
   createMediaComfyUIPlugin,
   createMediaDashScopePlugin,
-  createLLMMockPlugin,
   createLLMHttpPlugin,
-  createTTSSyncPlugin,
   createStorageIndexedDBPlugin,
 } from './providers'
 import {
@@ -21,13 +18,9 @@ import { loadProviderConfigs } from '../features/settings/httpBackendConfig'
 
 export function buildAppPlugins(): PluginRegistry {
   const registry = new PluginRegistry()
-  registry.register(createMediaMockPlugin())
-  // 真实媒体 Provider 注册在 mock 之后：未手动选择时默认仍使用 mock，选用后切换
   registry.register(createMediaComfyUIPlugin())
   registry.register(createMediaDashScopePlugin())
-  registry.register(createLLMMockPlugin())
   registry.register(createLLMHttpPlugin())
-  registry.register(createTTSSyncPlugin())
   registry.register(createStorageIndexedDBPlugin())
   registry.register(createCharactersFeaturePlugin())
   registry.register(createScriptFeaturePlugin())
