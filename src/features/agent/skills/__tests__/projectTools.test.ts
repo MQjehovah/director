@@ -36,11 +36,12 @@ describe('createProjectTools', () => {
     vi.restoreAllMocks()
   })
 
-  it('exposes the six project tools with Chinese descriptions', () => {
+  it('exposes the seven project tools with Chinese descriptions', () => {
     const names = createProjectTools().map((t) => t.name)
     expect(names).toEqual([
       'generate_script',
       'cut_scene',
+      'create_character',
       'generate_portrait',
       'generate_shot_media',
       'expand_prompt',
@@ -87,7 +88,7 @@ describe('createProjectTools', () => {
       const res = await tool('cut_scene').run({ sceneId: scene.id })
       expect(res.ok).toBe(true)
       if (res.ok) {
-        expect(res.summary).toBe('已切分为 2 个镜头')
+        expect(res.summary).toContain('已切分为 2 个镜头')
         expect(res.applyTarget).toEqual({ kind: 'shot' })
         expect(storyboard.shots).toHaveLength(2)
       }
@@ -103,7 +104,7 @@ describe('createProjectTools', () => {
       const scene = useScriptStore().addScene({ title: '空场' })
       const res = await tool('cut_scene').run({ sceneId: scene.id })
       expect(res.ok).toBe(false)
-      if (!res.ok) expect(res.summary).toContain('该场次没有可切分的镜头或已切分')
+      if (!res.ok) expect(res.summary).toContain('没有节拍')
     })
   })
 
@@ -115,7 +116,7 @@ describe('createProjectTools', () => {
       const res = await tool('generate_portrait').run({ character: '小' })
       expect(res.ok).toBe(true)
       if (res.ok) {
-        expect(res.summary).toContain('已创建立绘生成任务')
+        expect(res.summary).toContain('创建立绘生成任务')
         expect(res.applyTarget).toEqual({ kind: 'portrait', id: char.id })
         expect(useJobStore().jobs.length).toBeGreaterThan(0)
       }
@@ -241,6 +242,7 @@ describe('createProjectTools', () => {
     const cases: Array<[string, Record<string, string>]> = [
       ['generate_script', {}],
       ['cut_scene', {}],
+      ['create_character', {}],
       ['generate_portrait', {}],
       ['generate_shot_media', {}],
       ['expand_prompt', {}],
@@ -252,6 +254,60 @@ describe('createProjectTools', () => {
       const res = await t!.run(args)
       expect(res.ok).toBe(false)
       expect(res.summary.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('create_character creates a character and returns its id', async () => {
+    const res = await tool('create_character').run({ name: '小红', idea: '活泼少女' })
+    expect(res.ok).toBe(true)
+    const char = useCharacterStore().characters[0]
+    expect(char?.name).toBe('小红')
+    expect(res.applyTarget).toMatchObject({ kind: 'portrait', id: char?.id })
+  })
+
+  it('create_character rejects a duplicate name', async () => {
+    useCharacterStore().addCharacter({ name: '小红' })
+    const res = await tool('create_character').run({ name: '小红' })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.summary).toContain('已存在')
+  })
+
+  it('generate_script summary includes scene ids for chaining', async () => {
+    initProviders(['llm'])
+    const res = await tool('generate_script').run({ idea: '都市少年' })
+    expect(res.ok).toBe(true)
+    if (res.ok) expect(res.summary).toMatch(/scene-\d+/)
+  })
+
+  it('cut_scene summary includes shot ids', async () => {
+    const scriptStore = useScriptStore()
+    const scene = scriptStore.addScene({ title: '屋顶' })
+    scriptStore.addBeat(scene.id, { type: 'dialogue', dialogue: { speaker: 'A', text: 'hi' } })
+    const res = await tool('cut_scene').run({ sceneId: scene.id })
+    expect(res.ok).toBe(true)
+    if (res.ok) expect(res.summary).toMatch(/shot-\d+/)
+  })
+
+  it('cut_scene reports clearly when the scene has no beats', async () => {
+    const scene = useScriptStore().addScene({ title: '空场' })
+    const res = await tool('cut_scene').run({ sceneId: scene.id })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.summary).toContain('没有节拍')
+  })
+
+  it('generate_shot_media distinguishes missing shot from missing media', async () => {
+    const res = await tool('generate_shot_media').run({ shotId: 'nope' })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.summary).toContain('未找到镜头')
+  })
+
+  it('expand_prompt honors a style argument', async () => {
+    initProviders(['llm'])
+    const res = await tool('expand_prompt').run({ text: '银发剑士', style: '<anime>' })
+    expect(res.ok).toBe(true)
+    if (res.ok) {
+      expect(res.summary).toContain('<anime>')
+      expect(res.applyTarget).toMatchObject({ kind: 'prompt' })
     }
   })
 })
