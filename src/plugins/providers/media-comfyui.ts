@@ -13,8 +13,11 @@ import { getWorkflowTemplate } from '../../features/comfyui/workflowStore'
 
 export const MEDIA_COMFYUI_ID = 'media-comfyui'
 
+export type WsCtor = typeof WebSocket
+
 export interface MediaComfyUIOptions {
   pollIntervalMs?: number
+  wsCtor?: WsCtor
 }
 
 /** 默认文生图工作流模板（ComfyUI API 格式），支持 {prompt}/{negative_prompt}/{seed} 占位符 */
@@ -83,6 +86,23 @@ function readConfig(): { baseUrl: string; workflowTemplateId?: string } {
       ? config.workflowTemplateId.trim()
       : undefined
   return { baseUrl, workflowTemplateId }
+}
+
+/** 由 HTTP baseUrl 推导 WebSocket 地址：http→ws、https→wss，路径固定为 /ws */
+function deriveWsUrl(baseUrl: string, clientId: string): string {
+  const url = new URL(baseUrl)
+  const protocol = url.protocol === 'https:' ? 'wss' : 'ws'
+  return `${protocol}://${url.host}/ws?clientId=${clientId}`
+}
+
+function makeClientId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
 }
 
 /** 把占位符注入工作流图（避免文本里含引号破坏 JSON） */
@@ -187,10 +207,58 @@ function mimeFor(filename: string): string {
 
 export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): MediaComfyUIProvider {
   const pollIntervalMs = opts.pollIntervalMs ?? 1000
+  const wsCtor: WsCtor | undefined =
+    opts.wsCtor ?? (typeof WebSocket !== 'undefined' ? WebSocket : undefined)
   let seq = 0
 
   const ctrl = createJobController({ pollIntervalMs })
   const assets = new Map<string, Asset>()
+
+  // ComfyUI 的 progress 事件是全局的（不含 prompt_id）。记录本 provider 已提交的任务 id，
+  // 仅当恰好一个任务在跑时把进度上报给它；多个任务并发时跳过，交由粗粒度轮询兜底。
+  const activePromptIds = new Set<string>()
+  let ws: WebSocket | undefined
+  let wsUnavailable = false
+
+  ctrl.onJobUpdate((job) => {
+    if (job.status === 'done' || job.status === 'failed' || job.status === 'canceled') {
+      activePromptIds.delete(job.id)
+    }
+  })
+
+  /** 懒加载并复用单个 WS 连接；无 wsCtor 或连接失败时静默回退到轮询 */
+  function ensureWs(baseUrl: string): void {
+    if (ws || wsUnavailable || !wsCtor) return
+    try {
+      ws = new wsCtor(deriveWsUrl(baseUrl, makeClientId()))
+    } catch {
+      wsUnavailable = true
+      return
+    }
+    ws.onmessage = (event) => {
+      let msg: { type?: string; data?: { value?: unknown; max?: unknown } }
+      try {
+        msg = JSON.parse(String(event.data))
+      } catch {
+        return
+      }
+      if (msg.type !== 'progress') return
+      const value = msg.data?.value
+      const max = msg.data?.max
+      if (typeof value !== 'number' || typeof max !== 'number' || max <= 0) return
+      const pct = Math.round((value / max) * 100)
+      if (activePromptIds.size !== 1) return
+      const id = activePromptIds.values().next().value
+      if (typeof id === 'string') ctrl.reportProgress(id, pct)
+    }
+    ws.onerror = () => {
+      ws?.close()
+      ws = undefined
+    }
+    ws.onclose = () => {
+      ws = undefined
+    }
+  }
 
   function nextId(prefix: string): string {
     seq += 1
@@ -256,6 +324,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
 
   async function generateImage(params: TextToImageParams): Promise<Job> {
     const { baseUrl, workflowTemplateId } = readConfig()
+    ensureWs(baseUrl)
     const seed = params.seed ?? Math.floor(Math.random() * 1e9)
     let graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>
     if (workflowTemplateId) {
@@ -297,6 +366,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       params: { prompt: params.prompt, negativePrompt: params.negativePrompt, seed },
     })
     ctrl.setJob(job)
+    activePromptIds.add(job.id)
     ctrl.startPoller(job.id, () => pollTask(job.id), pollIntervalMs)
     return job
   }

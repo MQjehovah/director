@@ -24,14 +24,56 @@ function pngResponse(): Response {
   return { ok: true, status: 200, arrayBuffer: async () => bytes.buffer as ArrayBuffer } as unknown as Response
 }
 
+/** 最小化 WebSocket 假实现：记录构造 URL，支持测试侧 emit 入站消息 */
+class FakeWebSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSING = 2
+  static CLOSED = 3
+  static instances: FakeWebSocket[] = []
+  readonly url: string
+  readyState = FakeWebSocket.CONNECTING
+  onopen: (() => void) | null = null
+  onmessage: ((event: { data: string }) => void) | null = null
+  onerror: ((event: unknown) => void) | null = null
+  onclose: (() => void) | null = null
+  constructor(url: string) {
+    this.url = url
+    FakeWebSocket.instances.push(this)
+  }
+  send(_data: string): void {}
+  close(): void {
+    this.readyState = FakeWebSocket.CLOSED
+    this.onclose?.()
+  }
+  emit(type: string, data: unknown): void {
+    this.onmessage?.({ data: JSON.stringify({ type, data }) })
+  }
+  static reset(): void {
+    FakeWebSocket.instances = []
+  }
+}
+
+function providerWithFakeWs(pollIntervalMs = 1000) {
+  return createMediaComfyUIProvider({
+    pollIntervalMs,
+    wsCtor: FakeWebSocket as unknown as typeof WebSocket,
+  })
+}
+
 describe('media-comfyui provider', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.useFakeTimers()
+    FakeWebSocket.reset()
+    // jsdom 环境没有 WebSocket，但 Node 22 的全局 WebSocket 会泄漏进来；
+    // 显式置空以保证默认 wsCtor 走回退分支，避免测试真的去连 127.0.0.1:8188。
+    vi.stubGlobal('WebSocket', undefined)
   })
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     clearProviderConfig(MEDIA_COMFYUI_ID)
   })
 
@@ -222,5 +264,100 @@ describe('media-comfyui provider', () => {
     releaseHistory()
     await flushPromises()
     expect((await p.getJob('p5')).status).toBe('canceled')
+  })
+
+  it('updates job progress from websocket progress messages', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/prompt') ? jsonResponse({ prompt_id: 'p10' }) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    const progressSpy = vi.fn()
+    p.onJobUpdate((job) => progressSpy(job.progress))
+    await p.generateImage({ prompt: 'x' })
+
+    const ws = FakeWebSocket.instances[0]
+    expect(ws).toBeDefined()
+    ws.emit('progress', { value: 10, max: 20 })
+    expect((await p.getJob('p10')).progress).toBe(50)
+    expect(progressSpy).toHaveBeenCalledWith(50)
+  })
+
+  it('falls back to polling when the WebSocket global is unavailable', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'p11' }))
+    const historyCall = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ p11: { status: { status_str: 'running', completed: false } } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          p11: {
+            status: { completed: true },
+            outputs: { '9': { images: [{ filename: 'a.png', subfolder: '', type: 'output' }] } },
+          },
+        }),
+      )
+    const viewCall = vi.fn().mockResolvedValue(pngResponse())
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/prompt')) return promptCall(url, init)
+      if (String(url).includes('/history/')) return historyCall(url)
+      if (String(url).includes('/view?')) return viewCall(url)
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: 'x' })
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(10)
+    const done = await p.getJob('p11')
+    expect(done.status).toBe('done')
+    expect(done.result?.assetIds).toHaveLength(1)
+  })
+
+  it('derives the ws url from the configured http baseUrl', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/prompt') ? jsonResponse({ prompt_id: 'p12' }) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    await p.generateImage({ prompt: 'x' })
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(FakeWebSocket.instances[0].url).toMatch(/^ws:\/\/127\.0\.0\.1:8188\/ws\?clientId=/)
+  })
+
+  it('derives a wss url from an https baseUrl', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'https://comfy.example.com:8443' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/prompt') ? jsonResponse({ prompt_id: 'p13' }) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    await p.generateImage({ prompt: 'x' })
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(FakeWebSocket.instances[0].url).toMatch(/^wss:\/\/comfy\.example\.com:8443\/ws\?clientId=/)
+  })
+
+  it('reuses a single websocket across generateImage calls', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/prompt') ? jsonResponse({ prompt_id: 'p14' }) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    await p.generateImage({ prompt: 'x' })
+    await p.generateImage({ prompt: 'y' })
+    expect(FakeWebSocket.instances).toHaveLength(1)
   })
 })
