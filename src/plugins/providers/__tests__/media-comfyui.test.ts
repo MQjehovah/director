@@ -286,8 +286,29 @@ describe('media-comfyui provider', () => {
     const ws = FakeWebSocket.instances[0]
     expect(ws).toBeDefined()
     ws.emit('progress', { value: 10, max: 20 })
+    await flushPromises()
     expect((await p.getJob('p10')).progress).toBe(50)
     expect(progressSpy).toHaveBeenCalledWith(50)
+  })
+
+  it('marks a queued job running when websocket progress arrives', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/prompt') ? jsonResponse({ prompt_id: 'p15' }) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    await p.generateImage({ prompt: 'x' })
+    expect((await p.getJob('p15')).status).toBe('queued')
+
+    const ws = FakeWebSocket.instances[0]
+    ws.emit('progress', { value: 5, max: 20 })
+    await flushPromises()
+    const job = await p.getJob('p15')
+    expect(job.status).toBe('running')
+    expect(job.progress).toBe(25)
   })
 
   it('does not clobber websocket progress when the poller ticks', async () => {
@@ -307,6 +328,7 @@ describe('media-comfyui provider', () => {
 
     // WS 报告 75%：修复前轮询会在下一 tick 把它重置为 50
     ws.emit('progress', { value: 15, max: 20 })
+    await flushPromises()
     expect((await p.getJob('p12')).progress).toBe(75)
 
     await vi.advanceTimersByTimeAsync(1000)

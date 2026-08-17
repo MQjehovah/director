@@ -279,7 +279,18 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       const pct = Math.round((value / max) * 100)
       if (activePromptIds.size !== 1) return
       const id = activePromptIds.values().next().value
-      if (typeof id === 'string') ctrl.reportProgress(id, pct)
+      if (typeof id !== 'string') return
+      // 进度一旦出现即视为生成中：若任务仍为 queued，先置为 running，避免
+      // 进度条在动但状态仍显示「排队中」。
+      void ctrl.getJob(id).then((job) => {
+        if (job.status === 'queued') {
+          ctrl.patchJob(id, { status: 'running', progress: pct })
+        } else {
+          ctrl.reportProgress(id, pct)
+        }
+      }).catch(() => {
+        ctrl.reportProgress(id, pct)
+      })
     }
     ws.onerror = () => {
       wsConnected = false
