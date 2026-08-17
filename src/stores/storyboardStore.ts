@@ -30,6 +30,17 @@ export const useStoryboardStore = defineStore('storyboard', () => {
     shots.value = shots.value.filter((s) => s.id !== id)
   }
 
+  /** 持久化恢复：按原 id 批量还原，并把序号推进到已用最大值，避免新 id 冲突 */
+  function restoreShots(list: Shot[]): void {
+    shots.value = list.map((s) => ShotSchema.parse(s))
+    let max = 0
+    for (const s of shots.value) {
+      const m = /^shot-(\d+)$/.exec(s.id)
+      if (m) max = Math.max(max, Number(m[1]))
+    }
+    seq = max
+  }
+
   function moveShot(fromIndex: number, toIndex: number): void {
     const count = shots.value.length
     if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count) return
@@ -86,5 +97,6 @@ export const useStoryboardStore = defineStore('storyboard', () => {
     cutSceneToShots,
     getShotsByBeat,
     shotById,
+    restoreShots,
   }
 })

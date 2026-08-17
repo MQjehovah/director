@@ -33,5 +33,18 @@ export const useCharacterStore = defineStore('character', () => {
     return characters.value.filter((c) => c.tags.includes(tag))
   }
 
-  return { characters, addCharacter, updateCharacter, removeCharacter, getCharacter, findByTag }
+  /** 持久化恢复：按原 id 批量还原（不生成新 id） */
+  function restoreCharacters(list: Character[]): void {
+    characters.value = list.map((c) => CharacterSchema.parse(c))
+  }
+
+  return {
+    characters,
+    addCharacter,
+    updateCharacter,
+    removeCharacter,
+    getCharacter,
+    findByTag,
+    restoreCharacters,
+  }
 })

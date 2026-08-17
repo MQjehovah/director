@@ -44,6 +44,9 @@ describe('project store', () => {
         characterIds: ['c1'],
         scriptId: undefined,
         storyboardRefs: [],
+        characters: [],
+        script: null,
+        shots: [],
       }),
     })
     const s = useProjectStore()
