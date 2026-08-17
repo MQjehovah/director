@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { Badge, Button, Dialog, Input, Switch, Textarea } from '../../../components/ui'
 import { newId } from '../../../core/utils/id'
 import { createProjectTools } from '../skills/projectTools'
@@ -14,7 +14,7 @@ import {
 } from '../skills/skillStore'
 import type { AgentSkill, SkillKind } from '../skills/skillStore'
 
-defineProps<{
+const props = defineProps<{
   open: boolean
 }>()
 
@@ -46,6 +46,14 @@ const skills = ref<AgentSkill[]>(combinedSkills())
 function refresh(): void {
   skills.value = combinedSkills()
 }
+
+// 面板在 AppShell 中 KeepAlive，打开时重新计算，避免派生技能（工作流模板等）显示为旧列表
+watch(
+  () => props.open,
+  (open) => {
+    if (open) refresh()
+  },
+)
 
 // 可持久化启停的技能：prompt-template / skill-md（存于 skillStore）。
 // project-tool 随插件固定启用、comfyui-workflow 随工作流模板自动出现，均不提供启停开关。

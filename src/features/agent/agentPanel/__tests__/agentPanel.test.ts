@@ -113,4 +113,51 @@ describe('AgentPanel', () => {
     await flushPromises()
     expect(document.body.querySelector('[data-test="skill-row"]')).not.toBeNull()
   })
+
+  it('surfaces an error message when the LLM chat throws', async () => {
+    const throwing: LLMProvider = {
+      id: 'stub-agent-llm',
+      name: 'Stub Agent LLM',
+      models: [],
+      async *chat() {
+        throw new Error('网络错误')
+      },
+      async complete() {
+        return ''
+      },
+    }
+    initStore(throwing)
+    const w = mount(AgentPanel)
+    await send(w, '你好')
+    expect(w.text()).toContain('出错了')
+    expect(w.text()).toContain('网络错误')
+  })
+
+  it('disables the send button while a turn is in flight', async () => {
+    let release: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const slow: LLMProvider = {
+      id: 'stub-agent-llm',
+      name: 'Stub Agent LLM',
+      models: [],
+      async *chat() {
+        await gate
+        yield '完成了'
+      },
+      async complete() {
+        return ''
+      },
+    }
+    initStore(slow)
+    const w = mount(AgentPanel)
+    await w.get('[data-test="agent-input"]').setValue('你好')
+    await w.get('[data-test="agent-send"]').trigger('click')
+    await flushPromises()
+    expect(w.get<HTMLButtonElement>('[data-test="agent-send"]').element.disabled).toBe(true)
+    release!()
+    await flushPromises()
+    expect(w.get<HTMLButtonElement>('[data-test="agent-send"]').element.disabled).toBe(false)
+  })
 })
