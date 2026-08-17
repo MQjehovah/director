@@ -180,7 +180,7 @@ async function onGeneratePortrait(): Promise<void> {
 <template>
   <aside
     v-if="character"
-    class="flex w-96 shrink-0 flex-col overflow-y-auto border-l border-edge bg-panel"
+    class="flex w-[28rem] shrink-0 flex-col overflow-y-auto border-l border-edge bg-panel"
   >
     <header class="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
       <h2 class="text-sm font-semibold text-ink">角色详情</h2>

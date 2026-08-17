@@ -38,24 +38,33 @@ watch(
         :key="c.id"
         type="button"
         data-test="char-card"
-        class="flex flex-col gap-2 rounded-lg border border-edge bg-raised p-4 text-left transition-colors hover:border-zinc-600"
+        class="flex flex-col gap-3 rounded-lg border border-edge bg-raised p-4 text-left transition-colors hover:border-zinc-600"
         @click="emit('select', c.id)"
       >
-        <span class="text-sm font-semibold text-ink">{{ c.name }}</span>
-        <p v-if="c.bio || c.appearance" class="line-clamp-2 text-xs leading-relaxed text-ink-muted">
-          {{ c.bio || c.appearance }}
-        </p>
-        <div v-if="c.referenceImages.length > 0" class="flex gap-1">
-          <img
-            v-if="urlOf(c.referenceImages[0])"
-            :src="urlOf(c.referenceImages[0])"
-            class="h-10 w-10 rounded border border-edge bg-zinc-800 object-cover"
-            alt=""
-          />
-          <span v-else class="text-[10px] text-ink-muted">图 {{ c.referenceImages[0] }}</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-sm font-semibold text-ink">{{ c.name }}</span>
+          <div v-if="c.tags.length > 0" class="flex flex-wrap gap-1">
+            <Badge v-for="t in c.tags" :key="t">{{ t }}</Badge>
+          </div>
         </div>
-        <div v-if="c.tags.length > 0" class="flex flex-wrap gap-1">
-          <Badge v-for="t in c.tags" :key="t">{{ t }}</Badge>
+        <div class="flex gap-3">
+          <div v-if="c.referenceImages.length > 0" class="shrink-0">
+            <img
+              v-if="urlOf(c.referenceImages[0])"
+              :src="urlOf(c.referenceImages[0])"
+              class="h-20 w-20 rounded-md border border-edge bg-zinc-800 object-cover"
+              alt=""
+            />
+            <span v-else class="flex h-20 w-20 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted">
+              图 {{ c.referenceImages[0] }}
+            </span>
+          </div>
+          <p
+            v-if="c.bio || c.appearance"
+            class="min-w-0 flex-1 self-center text-xs leading-relaxed text-ink-muted line-clamp-3"
+          >
+            {{ c.bio || c.appearance }}
+          </p>
         </div>
       </button>
     </div>
