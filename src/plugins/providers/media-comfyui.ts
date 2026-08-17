@@ -396,9 +396,12 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       }
       const assetId = nextId('asset')
       const { url, mime } = await fetchImage(baseUrl, images[0])
+      // ComfyUI 部分版本把 SaveVideo 输出放在 images（filename 为 .mp4，animated: true），
+      // 按 mime 判断资产类型，避免视频被误标为图片
+      const kind = mime.startsWith('video/') ? 'video' : 'image'
       const asset = AssetSchema.parse({
         id: assetId,
-        kind: 'image',
+        kind,
         source: 'ai',
         url,
         metadata: { mime },
