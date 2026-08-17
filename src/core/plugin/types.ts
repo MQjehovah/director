@@ -16,13 +16,12 @@ export interface PluginBase {
   enabled: boolean
   version?: string
   description?: string
-  instance?: unknown
 }
 
 export interface ProviderPlugin<T = unknown> extends PluginBase {
   kind: 'provider'
   providerType: ProviderType
-  capabilities: ProviderCapabilities
+  capabilities?: ProviderCapabilities
   instance?: T
 }
 

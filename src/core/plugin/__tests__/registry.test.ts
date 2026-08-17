@@ -35,6 +35,13 @@ describe('plugin registry', () => {
     expect(r.resolveProvider('llm')).toHaveLength(1)
     expect(r.resolveProvider('tts')).toHaveLength(0)
   })
+  it('resolveEnabledProvider excludes disabled providers', () => {
+    const r = new PluginRegistry()
+    r.register(makeProvider())
+    r.register({ id: 'mock2', name: 'Mock2', kind: 'provider', providerType: 'media', enabled: false, capabilities: { text2image: true, image2video: false, text2video: false, upscale: false } })
+    expect(r.resolveEnabledProvider('media')).toHaveLength(1)
+    expect(r.resolveEnabledProvider('media')[0].id).toBe('mock')
+  })
   it('returns the provider only for provider-kind plugins', () => {
     const r = new PluginRegistry()
     r.register(makeProvider())

@@ -34,6 +34,10 @@ export class PluginRegistry {
     return out
   }
 
+  resolveEnabledProvider(providerType: ProviderType): ProviderPlugin[] {
+    return this.resolveProvider(providerType).filter((p) => p.enabled)
+  }
+
   list(): Plugin[] {
     return [...this.plugins.values()]
   }
@@ -64,9 +68,5 @@ export class PluginRegistry {
 
   off(event: keyof PluginEvents, handler: (payload: Plugin) => void): void {
     this.bus.off(event, handler)
-  }
-
-  emit(event: keyof PluginEvents, payload: Plugin): void {
-    this.bus.emit(event, payload)
   }
 }
