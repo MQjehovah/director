@@ -4,25 +4,27 @@
 
 ## 功能
 
-- **角色管理**：角色卡片网格、外貌描述、参考图、音色、LoRA、标签；AI 生成角色设定、扩写参考图提示词、生成立绘。
+- **项目管理**：顶栏项目下拉，多项目新建 / 切换 / 重命名 / 删除，各项目独立工作区，自动持久化到本地。
+- **AI 助手**：对话面板驱动 Agent，用自然语言指挥「生成剧本 / 创建角色 / 切分镜头 / 生成立绘 / 扩写提示词 / 导入 ComfyUI 工作流」；技能系统（提示词模板包、项目工具、SKILL 文档、ComfyUI 工作流）可安装与启停，结果可一键应用。
+- **角色管理**：角色卡片网格、外貌描述、参考图（上传 / AI 生成）、音色、LoRA、标签；AI 生成角色设定、扩写参考图提示词、生成立绘。
 - **剧本编辑器**：场次 + 叙事节拍（对话 / 动作 / 音效）；Markdown 导入、AI 生成剧本、AI 改写节拍、一键切分镜头。
 - **分镜设计**：镜头缩略图网格 + 拖拽重排；镜头类型（静态图 / 视频）、景别 / 机位 / 运镜 / 时长、提示词与随机种子；生成媒体任务与进度展示。
 - **成片合成**：时间轴播放器，静态镜头 Ken Burns 运镜 + 字幕，视频镜头直接播放；进度条与镜头点击定位。
 - **任务队列**：全局任务列表（状态、进度、所属镜头、插件），支持取消 / 重试 / 定位。
 - **一键全流程**：管道化执行「生成剧本 → 切分镜头 → 生成角色 → 出图 → 配音 → 组装」，每步可启用 / 跳过 / 排序。
-- **设置**：各 Provider 的启停与地址 / 密钥 / 模型参数配置，持久化到本地。
+- **设置**：按 Provider 分组，启停开关 + 展开配置详情（地址 / 密钥 / 模型）；ComfyUI 工作流模板管理内嵌于 ComfyUI Provider。
 
 ## 快速开始
 
 ```bash
 npm install
-npm run dev       # 开发模式（默认使用 mock Provider，无需任何后端）
+npm run dev       # 开发模式
 npm test          # 单元测试（Vitest）
 npm run build     # 生产构建
 npm run preview   # 预览构建产物
 ```
 
-默认启用全部 mock Provider，打开浏览器即可无后端走通完整流程。
+未配置真实 Provider 时，角色 / 剧本 / 分镜等流程可用（生成类能力需先在「设置」配置 LLM / 媒体 Provider）。
 
 ## 架构
 
@@ -51,7 +53,7 @@ src/
 **Provider = 后端连接，能力 = 后端能做的事**。Provider 数量 = 后端数量；每个 Provider 声明自己实现的能力清单：
 
 - **能力接口**：媒体能力拆分为 `text2image` / `text2video` / `image2video` / `editImage` / `upscale`，每个能力一个接口。Provider 声明 `capabilities: string[]` 说明实现哪些能力；`pluginStore.resolveInstanceCapability('media', 'text2image')` 按需解析——例如 active 是 DashScope（仅文生图）时，视频镜头会回退到其他启用的文生视频 Provider。
-- **模块插件化（FeaturePlugin）**：7 个功能模块全部是 FeaturePlugin，每个插件声明 `module { key, label, title, order }` + `component`。导航与主区由 `pluginStore.featureModules()` / `featureComponent(key)` 动态渲染。**新增模块 = 写一个插件文件 + 注册一行**，无需改 AppShell。
+- **模块插件化（FeaturePlugin）**：8 个功能模块全部是 FeaturePlugin，每个插件声明 `module { key, label, title, order }` + `component`。导航与主区由 `pluginStore.featureModules()` / `featureComponent(key)` 动态渲染。**新增模块 = 写一个插件文件 + 注册一行**，无需改 AppShell。
 - **配置持久化**：每个 Provider 的启停与参数保存于 localStorage（前缀 `ai-director:provider:`），启动时自动应用。
 - **任务生命周期**：媒体 Provider 复用 `createJobController`（任务注册 / 轮询 / 监听 / 取消 / 终态不可变），避免各实现重复手写。
 
@@ -129,3 +131,4 @@ Vue 3 · Vite · TypeScript · Pinia · Tailwind CSS · zod · Dexie · Vitest �
 - 设计文档：`docs/plans/2026-08-17-ai-director-design.md`
 - 实施计划：`docs/plans/2026-08-17-ai-director-implementation.md`
 - 插件体系重构设计：`docs/plans/2026-08-17-plugin-refactor-design.md`
+- Agent 系统设计：`docs/plans/2026-08-17-agent-design.md`
