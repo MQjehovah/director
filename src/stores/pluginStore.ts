@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 import { PluginRegistry } from '../core/plugin/registry'
-import type { Plugin, ProviderPlugin, ProviderType } from '../core/plugin/types'
+import type { MediaCapability, Plugin, ProviderPlugin, ProviderType } from '../core/plugin/types'
 import type { LLMProvider, MediaProvider, StorageProvider, TTSProvider } from '../providers'
 
 export const usePluginStore = defineStore('plugin', () => {
@@ -65,6 +65,38 @@ export const usePluginStore = defineStore('plugin', () => {
     return p.instance as T
   }
 
+  /** 能力判断：兼容旧的布尔位图与新的能力名数组两种形态；未声明能力视为具备全部能力 */
+  function hasCapability(p: ProviderPlugin | undefined, cap: MediaCapability): boolean {
+    const capabilities = p?.capabilities as unknown
+    if (capabilities === undefined) return true
+    if (Array.isArray(capabilities)) return capabilities.includes(cap)
+    if (typeof capabilities === 'object') return Boolean((capabilities as Record<string, boolean>)[cap])
+    return false
+  }
+
+  function resolveProviderCapability(
+    type: ProviderType,
+    cap: MediaCapability,
+  ): ProviderPlugin | undefined {
+    const r = registry.value
+    if (!r) return undefined
+    const preferredId = activeProviders.value[type]
+    if (preferredId) {
+      const preferred = r.getProvider(preferredId)
+      if (preferred && enabledState[preferred.id] && hasCapability(preferred, cap)) {
+        return preferred
+      }
+    }
+    return enabledProviders(type).find((p) => hasCapability(p, cap))
+  }
+
+  function resolveInstanceCapability<T = unknown>(
+    type: ProviderType,
+    cap: MediaCapability,
+  ): T | undefined {
+    return resolveProviderCapability(type, cap)?.instance as T | undefined
+  }
+
   const mediaProvider = computed<MediaProvider | undefined>(() => resolveInstance<MediaProvider>('media'))
   const llmProvider = computed<LLMProvider | undefined>(() => resolveInstance<LLMProvider>('llm'))
   const ttsProvider = computed<TTSProvider | undefined>(() => resolveInstance<TTSProvider>('tts'))
@@ -82,6 +114,9 @@ export const usePluginStore = defineStore('plugin', () => {
     isEnabled,
     toggle,
     getProviderInstance,
+    hasCapability,
+    resolveProviderCapability,
+    resolveInstanceCapability,
     mediaProvider,
     llmProvider,
     ttsProvider,

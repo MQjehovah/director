@@ -2,6 +2,8 @@ export type PluginKind = 'provider' | 'feature' | 'pipeline'
 
 export type ProviderType = 'media' | 'llm' | 'tts' | 'storage'
 
+export type MediaCapability = 'text2image' | 'text2video' | 'image2video' | 'editImage' | 'upscale'
+
 export interface ProviderCapabilities {
   text2image: boolean
   image2video: boolean
