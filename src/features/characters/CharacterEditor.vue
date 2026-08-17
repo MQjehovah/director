@@ -261,25 +261,8 @@ async function onGeneratePortrait(): Promise<void> {
       </label>
 
       <div class="flex flex-col gap-2">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-medium text-ink-muted">参考图</span>
-          <label
-            class="cursor-pointer select-none rounded-md px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink"
-            :class="{ 'pointer-events-none opacity-50': busy }"
-            data-test="ref-upload-btn"
-          >
-            上传
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              class="hidden"
-              data-test="ref-upload-input"
-              @change="onUploadFiles"
-            />
-          </label>
-        </div>
-        <div v-if="character.referenceImages.length > 0" class="flex flex-wrap gap-2">
+        <span class="text-xs font-medium text-ink-muted">参考图</span>
+        <div class="flex flex-wrap gap-2">
           <template v-for="r in character.referenceImages" :key="r">
             <img
               v-if="urlOf(r)"
@@ -295,8 +278,24 @@ async function onGeneratePortrait(): Promise<void> {
               加载中
             </div>
           </template>
+          <label
+            class="flex h-20 w-20 cursor-pointer select-none flex-col items-center justify-center gap-0.5 rounded-md border border-dashed border-zinc-600 bg-zinc-900/40 text-zinc-500 transition-colors hover:border-amber-400/60 hover:text-amber-300"
+            :class="{ 'pointer-events-none opacity-40': busy }"
+            data-test="ref-upload-btn"
+            title="上传本地图片"
+          >
+            <span class="text-base leading-none">+</span>
+            <span class="text-[10px]">上传</span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              class="hidden"
+              data-test="ref-upload-input"
+              @change="onUploadFiles"
+            />
+          </label>
         </div>
-        <p v-else class="text-xs text-ink-muted">暂无参考图，可上传本地图片或通过「AI 辅助」生成。</p>
         <p v-if="uploadMessage" class="text-xs text-amber-300" data-test="upload-message">
           {{ uploadMessage }}
         </p>

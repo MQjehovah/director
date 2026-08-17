@@ -73,6 +73,8 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
       id,
       kind: meta.kind,
       source: meta.source,
+      // 标记 blob 存于本地 blobs 表；getAssetUrl 会据此生成对象 URL
+      localPath: `idb://blob/${id}`,
       metadata: {
         name: meta.name,
         fileName: file instanceof File ? file.name : undefined,
@@ -94,7 +96,7 @@ export function createStorageIndexedDBProvider(opts: StorageIndexedDBOptions = {
 
   async function getAssetUrl(asset: Asset): Promise<string | undefined> {
     if (asset.url) return asset.url
-    if (asset.localPath) return asset.localPath
+    if (asset.localPath && !asset.localPath.startsWith('idb://')) return asset.localPath
     const cached = objectUrls.get(asset.id)
     if (cached) return cached
     const record = await getDb(databaseName).blobs.get(asset.id)
