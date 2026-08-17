@@ -72,7 +72,13 @@ export interface MediaComfyUIProvider extends MediaProvider {
 interface ComfyHistory {
   [promptId: string]: {
     status?: { status_str?: string; completed?: boolean; messages?: unknown[] }
-    outputs?: Record<string, { images?: Array<{ filename: string; subfolder?: string; type?: string }> }>
+    outputs?: Record<
+      string,
+      {
+        images?: Array<{ filename: string; subfolder?: string; type?: string }>
+        gifs?: Array<{ filename: string; subfolder?: string; type?: string; format?: string }>
+      }
+    >
   }
 }
 
@@ -213,6 +219,13 @@ function mimeFor(filename: string): string {
       return 'image/webp'
     case 'gif':
       return 'image/gif'
+    case 'mp4':
+    case 'm4v':
+      return 'video/mp4'
+    case 'webm':
+      return 'video/webm'
+    case 'mov':
+      return 'video/quicktime'
     default:
       return 'image/png'
   }
@@ -342,8 +355,26 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
         return
       }
       const images = Object.values(entry.outputs).flatMap((o) => o.images ?? [])
+      const gifs = Object.values(entry.outputs).flatMap((o) => o.gifs ?? [])
+      // 视频输出优先（SaveVideo → gifs）；其次图片
+      const video = gifs[0]
+      if (video) {
+        const assetId = nextId('asset')
+        const { url, mime } = await fetchImage(baseUrl, video)
+        const asset = AssetSchema.parse({
+          id: assetId,
+          kind: 'video',
+          source: 'ai',
+          url,
+          metadata: { mime, format: video.format ?? 'mp4' },
+        })
+        assets.set(assetId, asset)
+        ctrl.stopPoller(id)
+        ctrl.patchJob(id, { status: 'done', progress: 100, result: { assetIds: [assetId] } })
+        return
+      }
       if (images.length === 0) {
-        ctrl.fail(id, 'ComfyUI 未返回图像')
+        ctrl.fail(id, 'ComfyUI 未返回图像或视频')
         return
       }
       const assetId = nextId('asset')

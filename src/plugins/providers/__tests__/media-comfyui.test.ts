@@ -452,6 +452,49 @@ describe('media-comfyui provider', () => {
     expect(body.prompt['6'].inputs.text).toBe('动起来')
   })
 
+  it('produces a video asset from SaveVideo (gifs) output', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pvid' }))
+    const historyCall = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ pvid: { status: { status_str: 'running', completed: false } } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          pvid: {
+            status: { completed: true },
+            outputs: {
+              '92': { gifs: [{ filename: 'video/MiniMax_H3_00001_.mp4', subfolder: '', type: 'output' }] },
+            },
+          },
+        }),
+      )
+    const viewCall = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+    } as unknown as Response)
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/prompt')) return promptCall(url, init)
+      if (String(url).includes('/history/')) return historyCall(url)
+      if (String(url).includes('/view?')) return viewCall(url)
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    const job = await p.generateImage({ prompt: 'x' })
+    expect(job.id).toBe('pvid')
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(10)
+    const done = await p.getJob('pvid')
+    expect(done.status).toBe('done')
+    const asset = await p.getAsset(done.result!.assetIds![0])
+    expect(asset?.kind).toBe('video')
+    expect(asset?.url).toContain('data:video/mp4;base64,')
+  })
+
   it('injects prompt into custom nodes (MiniMax style) and seed into noise_seed', async () => {
     // 无 CLIPTextEncode/KSampler：提示词在自定义节点 prompt 字段，seed 在 RandomNoise.noise_seed
     saveWorkflowTemplate({

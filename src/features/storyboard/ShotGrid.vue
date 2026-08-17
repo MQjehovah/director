@@ -41,6 +41,15 @@ const shotTypeLabel: Record<Shot['shotType'], string> = {
   video: '视频',
 }
 
+function thumbUrlOf(assetId: string | undefined): string | undefined {
+  return assetId ? actions.thumbUrl(assetId) : undefined
+}
+
+function thumbIsVideo(assetId: string | undefined): boolean {
+  const url = thumbUrlOf(assetId)
+  return !!url && (url.startsWith('data:video') || url.startsWith('blob:video'))
+}
+
 function activeJobOf(shotId: string): Job | undefined {
   const job = actions.jobForShot(shotId)
   return job && (job.status === 'queued' || job.status === 'running') ? job : undefined
@@ -131,8 +140,17 @@ function onDrop(e: DragEvent, shotId: string): void {
           <span
             class="relative block aspect-video w-full overflow-hidden rounded-md border border-edge bg-zinc-900"
           >
+            <video
+              v-if="thumbIsVideo(shot.mediaAssets[0])"
+              :src="actions.thumbUrl(shot.mediaAssets[0])"
+              data-test="shot-thumb-video"
+              muted
+              playsinline
+              preload="metadata"
+              class="h-full w-full object-cover"
+            />
             <img
-              v-if="shot.mediaAssets.length > 0 && actions.thumbUrl(shot.mediaAssets[0])"
+              v-else-if="shot.mediaAssets.length > 0 && actions.thumbUrl(shot.mediaAssets[0])"
               :src="actions.thumbUrl(shot.mediaAssets[0])"
               data-test="shot-thumb-img"
               class="h-full w-full object-cover"
