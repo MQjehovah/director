@@ -12,7 +12,7 @@ const emit = defineEmits<{
 
 <template>
   <label
-    class="group/sw inline-flex cursor-pointer select-none items-center gap-2"
+    class="group inline-flex cursor-pointer select-none items-center gap-2"
     :class="{ 'opacity-50': disabled }"
   >
     <input

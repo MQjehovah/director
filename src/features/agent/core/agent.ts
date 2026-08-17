@@ -16,6 +16,7 @@ const DEFAULT_SYSTEM_PROMPT = `你是「AI导演台」的 AI 导演助手，负�
 
 规则：
 - 参数之间用英文逗号分隔；如果值包含空格、逗号或括号等特殊字符，请用引号包裹，例如 style="<anime>"。
+- 值中若含多层嵌套括号，必须整体用引号包裹，例如 prompt="call(min(1,2))"。
 - 一条回复中可同时调用多个工具。
 - 调用工具后，请根据工具返回的结果，用简洁的中文向用户总结。
 - 如果无需调用工具，直接回复用户。`
@@ -69,10 +70,11 @@ export function createAgent(deps: {
   async function run(userMessage: string): Promise<AgentTurnResult> {
     const toolCalls: AgentToolCall[] = []
     const toolResults: AgentToolResult[] = []
+    // 先提交用户消息，避免中途 llm.chat 抛错时上下文丢失（重试不会从空历史开始）
+    history = [...history, { role: 'user' as const, content: userMessage }].slice(-maxHistory)
     const messages: AgentMessage[] = [
       { role: 'system', content: buildSystemPrompt() },
       ...history.slice(-maxHistory),
-      { role: 'user', content: userMessage },
     ]
 
     const maxIterations = maxToolCalls + 1
@@ -100,9 +102,7 @@ export function createAgent(deps: {
       })
     }
 
-    history.push({ role: 'user', content: userMessage })
-    history.push({ role: 'assistant', content: assistantText })
-    history = history.slice(-maxHistory)
+    history = [...history, { role: 'assistant' as const, content: assistantText }].slice(-maxHistory)
 
     return { userMessage, assistantText, toolCalls, toolResults }
   }
@@ -119,7 +119,7 @@ export function createAgent(deps: {
       basePrompt = prompt
     },
     getHistory() {
-      return history
+      return [...history]
     },
   }
 }

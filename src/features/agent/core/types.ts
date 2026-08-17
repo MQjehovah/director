@@ -1,7 +1,6 @@
-export interface AgentMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
+import type { ChatMessage } from '../../../providers/LLMProvider'
+
+export type AgentMessage = ChatMessage
 
 export interface AgentToolCall {
   name: string
