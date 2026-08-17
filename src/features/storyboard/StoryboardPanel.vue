@@ -1,17 +1,70 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
+import { useScriptStore } from '../../stores/scriptStore'
 import { useShotActions } from './useShotActions'
-import { Button } from '../../components/ui'
+import { Button, Dialog, Select } from '../../components/ui'
+import type { SelectOption } from '../../components/ui'
+import type { Shot } from '../../core/models'
 import ShotGrid from './ShotGrid.vue'
 import ShotTimeline from './ShotTimeline.vue'
 import ShotEditor from './ShotEditor.vue'
 
 const store = useStoryboardStore()
+const scriptStore = useScriptStore()
 const actions = useShotActions()
 
 const view = ref<'grid' | 'timeline'>('grid')
 const selectedShotId = ref<string | undefined>(undefined)
+
+const addOpen = ref(false)
+const sourceSceneId = ref('')
+const sourceBeatId = ref('')
+const shotType = ref<Shot['shotType']>('image')
+
+const sceneOptions = computed<SelectOption[]>(() => [
+  ...scriptStore.scenes.map((s) => ({ value: s.id, label: s.title || '未命名场次' })),
+])
+
+const beatOptions = computed<SelectOption[]>(() => {
+  const scene = scriptStore.scenes.find((s) => s.id === sourceSceneId.value)
+  return (scene?.beats ?? []).map((b, i) => ({
+    value: b.id,
+    label: `${i + 1}. ${beatText(b.type, b)}`,
+  }))
+})
+
+function beatText(type: string, b: { dialogue?: { speaker?: string; text?: string }; action?: string }): string {
+  if (type === 'dialogue') return `${b.dialogue?.speaker ?? ''}：${b.dialogue?.text ?? ''}`
+  if (type === 'sfx') return `音效：${b.action ?? ''}`
+  return b.action ?? ''
+}
+
+function openAdd(): void {
+  sourceSceneId.value = scriptStore.scenes[0]?.id ?? ''
+  sourceBeatId.value = ''
+  shotType.value = 'image'
+  addOpen.value = true
+}
+
+function onAdd(): void {
+  if (sourceBeatId.value) {
+    const scene = scriptStore.scenes.find((s) => s.id === sourceSceneId.value)
+    const beat = scene?.beats.find((b) => b.id === sourceBeatId.value)
+    if (beat) {
+      const shot = store.addShot({
+        shotType: shotType.value,
+        beatRef: beat.id,
+        prompt: beatText(beat.type, beat) || undefined,
+      })
+      selectedShotId.value = shot.id
+    }
+  } else {
+    const shot = store.addShot({ shotType: shotType.value })
+    selectedShotId.value = shot.id
+  }
+  addOpen.value = false
+}
 
 async function onGenerateAll(): Promise<void> {
   for (const shot of [...store.shots]) {
@@ -57,6 +110,9 @@ function selectShot(id: string): void {
         >
           时间轴
         </Button>
+        <Button variant="primary" size="sm" data-test="add-shot" @click="openAdd">
+          + 添加镜头
+        </Button>
       </div>
       <div class="flex items-center gap-2">
         <Button
@@ -75,7 +131,7 @@ function selectShot(id: string): void {
     </div>
 
     <p v-if="store.shots.length === 0" class="text-sm text-ink-muted" data-test="empty">
-      暂无镜头，可从剧本模块「一键切分为镜头」生成。
+      暂无镜头。可点「添加镜头」从剧本节拍创建，或在剧本模块「一键切分为镜头」。
     </p>
 
     <div v-else class="flex min-h-0 flex-1 gap-4">
@@ -91,5 +147,50 @@ function selectShot(id: string): void {
         @remove="selectedShotId = undefined"
       />
     </div>
+
+    <Dialog :open="addOpen" title="添加镜头" @update:open="addOpen = $event">
+      <div class="flex flex-col gap-4">
+        <label class="block text-xs font-medium text-ink-muted">
+          来源节拍（可选）
+          <Select
+            v-model="sourceSceneId"
+            :options="sceneOptions"
+            class="mt-1"
+            placeholder="选择场次"
+            data-test="add-scene"
+          />
+        </label>
+        <label v-if="sourceSceneId" class="block text-xs font-medium text-ink-muted">
+          节拍（留空则为空白镜头）
+          <Select
+            v-model="sourceBeatId"
+            :options="beatOptions"
+            class="mt-1"
+            placeholder="选择节拍（可选）"
+            data-test="add-beat"
+          />
+        </label>
+        <label class="block text-xs font-medium text-ink-muted">
+          镜头类型
+          <Select
+            v-model="shotType"
+            :options="[
+              { value: 'image', label: '静态图' },
+              { value: 'video', label: '视频' },
+            ]"
+            class="mt-1"
+            data-test="add-shot-type"
+          />
+        </label>
+        <p class="text-xs text-ink-muted">
+          从节拍创建时自动填入镜头提示词；留空创建空白镜头，之后可在镜头详情中编辑。
+        </p>
+        <div class="flex justify-end">
+          <Button variant="primary" size="sm" data-test="add-shot-confirm" @click="onAdd">
+            创建
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   </div>
 </template>

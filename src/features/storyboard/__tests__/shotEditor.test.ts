@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, DOMWrapper } from '@vue/test-utils'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import ShotGrid from '../ShotGrid.vue'
@@ -6,6 +6,7 @@ import ShotEditor from '../ShotEditor.vue'
 import ShotTimeline from '../ShotTimeline.vue'
 import StoryboardPanel from '../StoryboardPanel.vue'
 import { useStoryboardStore } from '../../../stores/storyboardStore'
+import { useScriptStore } from '../../../stores/scriptStore'
 import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useShotActions } from '../useShotActions'
@@ -14,6 +15,12 @@ import type { MediaCapability } from '../../../core'
 import { PluginRegistry } from '../../../core'
 import { createJobController } from '../../../providers/capabilities'
 import { createStubMediaPlugin } from '../../shared/__tests__/stubProviders'
+
+function inDialog(selector: string): DOMWrapper<Element> {
+  const el = document.body.querySelector(selector)
+  if (!el) throw new Error(`dialog element not found: ${selector}`)
+  return new DOMWrapper(el)
+}
 
 function initMedia(delayMs = 30): void {
   const registry = new PluginRegistry()
@@ -215,6 +222,34 @@ describe('storyboard panel', () => {
   it('shows an empty state when there are no shots', () => {
     const w = mount(StoryboardPanel)
     expect(w.get('[data-test="empty"]')).toBeTruthy()
+  })
+
+  it('adds a blank shot manually without any AI or script', async () => {
+    const w = mount(StoryboardPanel)
+    await w.get('[data-test="add-shot"]').trigger('click')
+    await inDialog('[data-test="add-shot-confirm"]').trigger('click')
+    const store = useStoryboardStore()
+    expect(store.shots).toHaveLength(1)
+    expect(store.shots[0].shotType).toBe('image')
+    expect(store.shots[0].beatRef).toBeUndefined()
+    expect(w.get('[data-test="shot-card"]')).toBeTruthy()
+  })
+
+  it('creates a shot from a script beat with the prompt prefilled', async () => {
+    const scriptStore = useScriptStore()
+    const scene = scriptStore.addScene({ title: '屋顶' })
+    const beat = scriptStore.addBeat(scene.id, {
+      type: 'dialogue',
+      dialogue: { speaker: '小明', text: '你好' },
+    })
+    const w = mount(StoryboardPanel)
+    await w.get('[data-test="add-shot"]').trigger('click')
+    await inDialog('[data-test="add-beat"]').setValue(beat.id)
+    await inDialog('[data-test="add-shot-confirm"]').trigger('click')
+    const store = useStoryboardStore()
+    expect(store.shots).toHaveLength(1)
+    expect(store.shots[0].beatRef).toBe(beat.id)
+    expect(store.shots[0].prompt).toContain('你好')
   })
 })
 
