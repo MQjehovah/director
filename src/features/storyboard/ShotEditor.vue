@@ -138,8 +138,9 @@ async function onRegenerate(): Promise<void> {
   }
 }
 
-function onRemove(): void {
+async function onRemove(): Promise<void> {
   if (!shot.value) return
+  await actions.cancelGeneration(props.shotId)
   store.removeShot(props.shotId)
   emit('remove', props.shotId)
   emit('close')

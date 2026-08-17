@@ -64,24 +64,40 @@ export function useCharacterFeatures() {
       result: providerJob.result,
     })
 
+    const applyAsset = (assetIds: string[]): void => {
+      if (assetIds.length === 0) return
+      const current = characterStore.getCharacter(characterId)
+      if (current) {
+        characterStore.updateCharacter(characterId, {
+          referenceImages: [...current.referenceImages, ...assetIds],
+        })
+      }
+    }
+
     const off = media.onJobUpdate((updated) => {
       if (updated.id !== job.id) return
       jobStore.updateJob(updated)
       if (updated.status === 'done') {
-        const assetIds = updated.result?.assetIds ?? []
-        if (assetIds.length > 0) {
-          const current = characterStore.getCharacter(characterId)
-          if (current) {
-            characterStore.updateCharacter(characterId, {
-              referenceImages: [...current.referenceImages, ...assetIds],
-            })
-          }
-        }
+        applyAsset(updated.result?.assetIds ?? [])
         off()
       } else if (updated.status === 'failed' || updated.status === 'canceled') {
         off()
       }
     })
+
+    // Reconcile: a provider may have completed synchronously before the
+    // listener was registered (push/SSE/instant providers).
+    try {
+      const latest = await media.getJob(job.id)
+      if (latest.status === 'done') {
+        applyAsset(latest.result?.assetIds ?? [])
+        off()
+      } else if (latest.status === 'failed' || latest.status === 'canceled') {
+        off()
+      }
+    } catch {
+      // provider may not support getJob for this job; rely on listener
+    }
 
     return job
   }

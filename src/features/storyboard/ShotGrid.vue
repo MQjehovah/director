@@ -60,7 +60,8 @@ function move(delta: -1 | 1, index: number): void {
   store.moveShot(index, index + delta)
 }
 
-function removeShot(id: string): void {
+async function removeShot(id: string): Promise<void> {
+  await actions.cancelGeneration(id)
   store.removeShot(id)
   emit('remove', id)
 }

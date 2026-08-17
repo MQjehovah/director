@@ -68,24 +68,44 @@ export function useShotActions() {
     })
     storyboardStore.updateShot(shotId, { renderJobRef: job.id })
 
+    const applyAsset = (assetIds: string[]): void => {
+      if (assetIds.length === 0) return
+      const current = storyboardStore.shotById(shotId)
+      if (current) {
+        storyboardStore.updateShot(shotId, {
+          mediaAssets: [...current.mediaAssets, ...assetIds],
+        })
+      }
+    }
+
+    const finish = (): void => {
+      off()
+    }
+
     const off = media.onJobUpdate((updated) => {
       if (updated.id !== job.id) return
       jobStore.updateJob(updated)
       if (updated.status === 'done') {
-        const assetIds = updated.result?.assetIds ?? []
-        if (assetIds.length > 0) {
-          const current = storyboardStore.shotById(shotId)
-          if (current) {
-            storyboardStore.updateShot(shotId, {
-              mediaAssets: [...current.mediaAssets, ...assetIds],
-            })
-          }
-        }
-        off()
+        applyAsset(updated.result?.assetIds ?? [])
+        finish()
       } else if (updated.status === 'failed' || updated.status === 'canceled') {
-        off()
+        finish()
       }
     })
+
+    // Reconcile: a provider may have completed synchronously before the
+    // listener was registered (push/SSE/instant providers).
+    try {
+      const latest = await media.getJob(job.id)
+      if (latest.status === 'done') {
+        applyAsset(latest.result?.assetIds ?? [])
+        finish()
+      } else if (latest.status === 'failed' || latest.status === 'canceled') {
+        finish()
+      }
+    } catch {
+      // provider may not support getJob for this job; rely on listener
+    }
 
     return job
   }
