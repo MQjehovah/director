@@ -50,4 +50,15 @@ describe('plugin store', () => {
     s.setActiveProvider('media', 'media-other')
     expect(s.mediaProvider?.id).toBe('media-other')
   })
+
+  it('getProviderInstance resolves a provider instance by id', () => {
+    const s = usePluginStore()
+    const r = new PluginRegistry()
+    r.register(createMediaMockPlugin())
+    s.init(r)
+    expect(s.getProviderInstance('media-mock')).toBeDefined()
+    expect(s.getProviderInstance('missing')).toBeUndefined()
+    s.toggle('media-mock', false)
+    expect(s.getProviderInstance('media-mock')).toBeUndefined()
+  })
 })

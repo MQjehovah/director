@@ -40,12 +40,18 @@ const pluginName = computed<string | undefined>(() => {
   return plugin?.name ?? job.value.pluginId
 })
 
-// Provider resolution by job type (MVP): media-type jobs use the media
-// provider's cancelJob, tts jobs use the tts provider. No pluginStore
-// get-by-id lookup exists, so the mapping is by job type rather than pluginId.
+interface CancelableProvider {
+  cancelJob: (id: string) => Promise<unknown>
+}
+
+// Provider resolution: prefer the owning pluginId so a provider swap between
+// job creation and cancellation still cancels the right instance. Fall back to
+// a job-type mapping for jobs whose pluginId is absent.
 const MEDIA_JOB_TYPES = new Set(['text2image', 'image2video', 'text2video', 'upscale'])
 
-function cancelProviderOf(j: Job): { cancelJob: (id: string) => Promise<unknown> } | undefined {
+function cancelProviderOf(j: Job): CancelableProvider | undefined {
+  const byPlugin = pluginStore.getProviderInstance<CancelableProvider>(j.pluginId)
+  if (byPlugin?.cancelJob) return byPlugin
   if (MEDIA_JOB_TYPES.has(j.type)) return pluginStore.mediaProvider
   if (j.type === 'tts') return pluginStore.ttsProvider
   return undefined
@@ -68,12 +74,16 @@ async function onCancel(): Promise<void> {
 async function onRetry(): Promise<void> {
   const j = job.value
   if (!j?.shotRef) return
-  jobStore.removeJob(j.id)
   try {
-    await useShotActions().generateMedia(j.shotRef)
+    const newJob = await useShotActions().generateMedia(j.shotRef)
+    if (newJob) {
+      jobStore.removeJob(j.id)
+      return
+    }
   } catch {
-    // generation will surface as a failed job on its own
+    // fall through to keep the failed job visible
   }
+  jobStore.markFailed(j.id, '重试失败：媒体 Provider 不可用。')
 }
 
 async function onRemove(): Promise<void> {

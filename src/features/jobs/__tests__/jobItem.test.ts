@@ -97,6 +97,31 @@ describe('job item', () => {
     expect(storyboard.shotById(shot.id)?.mediaAssets).toHaveLength(1)
   })
 
+  it('keeps the failed job visible when retry has no media provider', async () => {
+    const storyboard = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = storyboard.addShot({ shotType: 'image' })
+    jobs.addJob({ id: 'old', type: 'text2image', status: 'failed', shotRef: shot.id })
+    const w = mount(JobItem, { props: { jobId: 'old' } })
+    await w.get('[data-test="job-retry"]').trigger('click')
+    await flushPromises()
+    expect(jobs.getJob('old')?.status).toBe('failed')
+    expect(jobs.jobs).toHaveLength(1)
+  })
+
+  it('cancels a running job via the owning plugin id', async () => {
+    initMedia(5000)
+    const storyboard = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = storyboard.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.pluginId).toBe('media-mock')
+    const w = mount(JobItem, { props: { jobId: job?.id ?? '' } })
+    await w.get('[data-test="job-cancel"]').trigger('click')
+    await flushPromises()
+    expect(jobs.getJob(job?.id ?? '')?.status).toBe('canceled')
+  })
+
   it('removes the job from the queue', async () => {
     const store = useJobStore()
     store.addJob({ id: 'j1', type: 'text2image', status: 'done' })

@@ -56,6 +56,15 @@ export const usePluginStore = defineStore('plugin', () => {
     return first?.instance as T | undefined
   }
 
+  function getProviderInstance<T = unknown>(id: string | undefined): T | undefined {
+    if (!id) return undefined
+    const r = registry.value
+    if (!r) return undefined
+    const p = r.getProvider(id)
+    if (!p || !enabledState[p.id] || p.instance === undefined) return undefined
+    return p.instance as T
+  }
+
   const mediaProvider = computed<MediaProvider | undefined>(() => resolveInstance<MediaProvider>('media'))
   const llmProvider = computed<LLMProvider | undefined>(() => resolveInstance<LLMProvider>('llm'))
   const ttsProvider = computed<TTSProvider | undefined>(() => resolveInstance<TTSProvider>('tts'))
@@ -72,6 +81,7 @@ export const usePluginStore = defineStore('plugin', () => {
     setActiveProvider,
     isEnabled,
     toggle,
+    getProviderInstance,
     mediaProvider,
     llmProvider,
     ttsProvider,
