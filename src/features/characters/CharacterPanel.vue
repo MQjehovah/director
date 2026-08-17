@@ -24,9 +24,15 @@ function closeEditor(): void {
 
 <template>
   <div class="flex h-full gap-4 p-4">
-    <div class="min-w-0 flex-1 overflow-y-auto">
+    <div class="relative min-w-0 flex-1 overflow-y-auto">
       <CharacterGrid @select="openEditor" @add="addNew" />
+      <CharacterEditor
+        v-if="selectedId"
+        :key="selectedId"
+        :character-id="selectedId"
+        class="absolute inset-y-0 right-0 z-10 shadow-2xl"
+        @close="closeEditor"
+      />
     </div>
-    <CharacterEditor v-if="selectedId" :key="selectedId" :character-id="selectedId" @close="closeEditor" />
   </div>
 </template>
