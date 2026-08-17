@@ -8,10 +8,11 @@ import {
   cutStep,
   portraitStep,
   renderStep,
+  voiceStep,
   assembleStep,
   presetPipeline,
 } from '../presetSteps'
-import { createMediaMockProvider, createLLMMockPlugin } from '../../../plugins/providers'
+import { createMediaMockProvider, createLLMMockPlugin, createTTSSyncPlugin } from '../../../plugins/providers'
 import { PluginRegistry } from '../../../core'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useScriptStore } from '../../../stores/scriptStore'
@@ -20,7 +21,7 @@ import { useJobStore } from '../../../stores/jobStore'
 import PipelineEditor from '../PipelineEditor.vue'
 import ComposerPanel from '../ComposerPanel.vue'
 
-function initProviders(opts: { llm?: boolean; media?: boolean } = {}): void {
+function initProviders(opts: { llm?: boolean; media?: boolean; tts?: boolean } = {}): void {
   const registry = new PluginRegistry()
   if (opts.llm) registry.register(createLLMMockPlugin())
   if (opts.media) {
@@ -35,6 +36,7 @@ function initProviders(opts: { llm?: boolean; media?: boolean } = {}): void {
       instance: provider,
     })
   }
+  if (opts.tts) registry.register(createTTSSyncPlugin({ delayMs: 10 }))
   usePluginStore().init(registry)
 }
 
@@ -185,6 +187,46 @@ describe('preset steps', () => {
     expect(report.results['portrait']).toMatchObject({ portraitCount: 0 })
   })
 
+  it('voiceStep creates jobs for dialogue shots when TTS is available', async () => {
+    initProviders({ tts: true })
+    const scriptStore = useScriptStore()
+    const storyboard = useStoryboardStore()
+    const scene = scriptStore.addScene({ title: '第一场' })
+    const beat = scriptStore.addBeat(scene.id, {
+      type: 'dialogue',
+      dialogue: { speaker: '小明', text: '你好' },
+    })
+    storyboard.addShot({ shotType: 'image', beatRef: beat.id })
+    const report = await runSteps([voiceStep()])
+    expect(report.ok).toBe(true)
+    expect(report.results['voice']).toMatchObject({ voiceCount: 1 })
+    expect(useJobStore().jobs.some((j) => j.type === 'tts')).toBe(true)
+  })
+
+  it('voiceStep fails with a clear error when TTS is missing', async () => {
+    const report = await runSteps([voiceStep()])
+    expect(report.errors['voice']).toContain('TTS')
+    expect(report.ok).toBe(false)
+  })
+
+  it('cutStep is idempotent: re-cutting preserves existing shots', async () => {
+    initProviders({ llm: true })
+    const storyboard = useStoryboardStore()
+    const scriptStore = useScriptStore()
+    const scene = scriptStore.addScene({ title: '第一场' })
+    scriptStore.addBeat(scene.id, {
+      type: 'dialogue',
+      dialogue: { speaker: '小明', text: '你好' },
+    })
+    await runSteps([cutStep()])
+    expect(storyboard.shots).toHaveLength(1)
+    storyboard.updateShot(storyboard.shots[0].id, { mediaAssets: ['preserved-asset'] })
+    const second = await runSteps([cutStep()])
+    expect(storyboard.shots).toHaveLength(1)
+    expect(storyboard.shots[0].mediaAssets).toContain('preserved-asset')
+    expect(second.results['cut']).toMatchObject({ shotCount: 0 })
+  })
+
   it('assembleStep reports a summary', async () => {
     const report = await runSteps([assembleStep()])
     expect(report.ok).toBe(true)
@@ -192,13 +234,13 @@ describe('preset steps', () => {
   })
 
   it('the full preset pipeline with mocks produces script, shots and jobs', async () => {
-    initProviders({ llm: true, media: true })
+    initProviders({ llm: true, media: true, tts: true })
     const report = await runSteps(presetPipeline(), '一个关于太空猫的冒险故事')
     expect(report.ok).toBe(true)
     expect(useScriptStore().scenes.length).toBeGreaterThan(0)
     expect(useStoryboardStore().shots.length).toBeGreaterThan(0)
     expect(useJobStore().jobs.length).toBeGreaterThan(0)
-    expect(report.completed).toEqual(['script', 'cut', 'portrait', 'render', 'assemble'])
+    expect(report.completed).toEqual(['script', 'cut', 'portrait', 'render', 'voice', 'assemble'])
   })
 })
 
@@ -209,9 +251,10 @@ describe('pipeline editor', () => {
 
   it('renders a row per step with its title', () => {
     const w = mount(PipelineEditor, { props: { steps: presetPipeline() } })
-    expect(w.findAll('[data-test="step-row"]')).toHaveLength(5)
+    expect(w.findAll('[data-test="step-row"]')).toHaveLength(6)
     expect(w.text()).toContain('生成剧本')
     expect(w.text()).toContain('切分镜头')
+    expect(w.text()).toContain('配音')
     expect(w.text()).toContain('组装成片')
   })
 
@@ -255,7 +298,7 @@ describe('composer panel', () => {
   })
 
   it('runs the full pipeline with mocks producing script, shots and jobs', async () => {
-    initProviders({ llm: true, media: true })
+    initProviders({ llm: true, media: true, tts: true })
     const w = mount(ComposerPanel)
     await w.get('[data-test="idea-input"]').setValue('一个关于太空猫的冒险故事')
     await w.get('[data-test="run-all"]').trigger('click')

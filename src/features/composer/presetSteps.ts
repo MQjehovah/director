@@ -6,6 +6,7 @@ import { useCharacterStore } from '../../stores/characterStore'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useJobStore } from '../../stores/jobStore'
 import { usePluginStore } from '../../stores/pluginStore'
+import { beatDialogueForShot } from '../player/subtitles'
 import type { PipelineStep } from './PipelineRunner'
 
 export interface ScriptStepResult {
@@ -25,6 +26,11 @@ export interface PortraitStepResult {
 
 export interface RenderStepResult {
   renderCount: number
+  jobIds: string[]
+}
+
+export interface VoiceStepResult {
+  voiceCount: number
   jobIds: string[]
 }
 
@@ -68,6 +74,7 @@ export function cutStep(): PipelineStep<CutStepResult> {
     enabled: true,
     async run(ctx) {
       const scriptStore = useScriptStore()
+      const storyboardStore = useStoryboardStore()
       const features = useScriptFeatures()
       if (scriptStore.scenes.length === 0) {
         ctx.fail('cut', '没有可切分的场次，请先生成剧本。')
@@ -75,6 +82,10 @@ export function cutStep(): PipelineStep<CutStepResult> {
       }
       const shotIds: string[] = []
       for (const scene of scriptStore.scenes) {
+        // 已切分的场景跳过，避免重建镜头时清空已生成的媒体资产
+        const beatIds = new Set(scene.beats.map((b) => b.id))
+        const hasShots = storyboardStore.shots.some((s) => s.beatRef && beatIds.has(s.beatRef))
+        if (hasShots) continue
         const shots = features.cutSceneToShots(scene.id)
         shotIds.push(...shots.map((s) => s.id))
       }
@@ -147,8 +158,48 @@ export function renderStep(): PipelineStep<RenderStepResult> {
   }
 }
 
-export function assembleStep(): PipelineStep<AssembleStepResult> {
+export function voiceStep(): PipelineStep<VoiceStepResult> {
   return {
+    id: 'voice',
+    title: '配音',
+    enabled: true,
+    async run(ctx) {
+      const pluginStore = usePluginStore()
+      const storyboardStore = useStoryboardStore()
+      const scriptStore = useScriptStore()
+      if (!pluginStore.ttsProvider) {
+        ctx.fail('voice', '未配置 TTS Provider，无法配音。')
+        return
+      }
+      const jobStore = useJobStore()
+      const jobIds: string[] = []
+      for (const shot of storyboardStore.shots) {
+        const dialogue = beatDialogueForShot(scriptStore.script, shot)
+        if (!dialogue) continue
+        try {
+          const job = await pluginStore.ttsProvider.synthesize(dialogue)
+          jobIds.push(job.id)
+          jobStore.addJob({
+            id: job.id,
+            type: job.type,
+            status: job.status,
+            progress: job.progress,
+            pluginId: job.pluginId,
+            shotRef: shot.id,
+            params: job.params,
+            result: job.result,
+          })
+        } catch (err) {
+          ctx.fail('voice', err instanceof Error ? err.message : String(err))
+          return
+        }
+      }
+      return { voiceCount: jobIds.length, jobIds }
+    },
+  }
+}
+
+export function assembleStep(): PipelineStep<AssembleStepResult> {  return {
     id: 'assemble',
     title: '组装成片',
     enabled: true,
@@ -166,5 +217,5 @@ export function assembleStep(): PipelineStep<AssembleStepResult> {
 }
 
 export function presetPipeline(): PipelineStep[] {
-  return [scriptStep(), cutStep(), portraitStep(), renderStep(), assembleStep()]
+  return [scriptStep(), cutStep(), portraitStep(), renderStep(), voiceStep(), assembleStep()]
 }
