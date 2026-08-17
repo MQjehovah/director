@@ -88,6 +88,17 @@ describe('http backend config', () => {
     localStorage.setItem(`${STORAGE_PREFIX}arr`, '[1,2,3]')
     expect(loadProviderConfig('arr')).toBeUndefined()
   })
+
+  it('tolerates unavailable localStorage on read', () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError')
+    })
+    const length = vi.spyOn(Storage.prototype, 'length', 'get').mockReturnValue(0)
+    expect(loadProviderConfigs()).toEqual({})
+    expect(loadProviderConfig('media-http')).toBeUndefined()
+    getItem.mockRestore()
+    length.mockRestore()
+  })
 })
 
 describe('provider config', () => {

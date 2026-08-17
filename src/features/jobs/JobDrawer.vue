@@ -67,7 +67,13 @@ const summarySegments = computed<string[]>(() => {
           <h2 class="text-sm font-semibold text-ink">任务队列</h2>
           <p class="text-xs text-ink-muted">共 {{ jobStore.jobs.length }} 个任务</p>
         </div>
-        <Button size="sm" variant="ghost" data-test="drawer-close" @click="emit('close')">
+        <Button
+          v-if="!inline"
+          size="sm"
+          variant="ghost"
+          data-test="drawer-close"
+          @click="emit('close')"
+        >
           关闭
         </Button>
       </header>

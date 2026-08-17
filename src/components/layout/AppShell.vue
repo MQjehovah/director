@@ -71,11 +71,13 @@ function startResize(e: PointerEvent) {
         >
           <h1 class="text-lg font-semibold">{{ currentLabel }}</h1>
         </div>
-        <component
-          :is="viewComponent"
-          v-bind="viewProps[activeView] ?? {}"
-          class="min-h-0 flex-1"
-        />
+        <KeepAlive>
+          <component
+            :is="viewComponent"
+            v-bind="viewProps[activeView] ?? {}"
+            class="min-h-0 flex-1"
+          />
+        </KeepAlive>
       </main>
 
       <button
