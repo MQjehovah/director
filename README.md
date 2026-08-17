@@ -30,32 +30,34 @@ npm run preview   # 预览构建产物
 src/
 ├── core/                # 稳定内核
 │   ├── models/          # zod 领域模型（角色/剧本/镜头/任务/项目/资产）
-│   ├── plugin/          # 插件系统（注册表/管理器/类型）
+│   ├── plugin/          # 插件系统（注册表/管理器/类型/模块收集）
 │   └── bus.ts           # 类型化事件总线
-├── providers/           # Provider 能力接口
-│   ├── MediaProvider    # 媒体生成（文生图/图生视频/文生视频/超分）
+├── providers/           # 能力接口
+│   ├── capabilities/    # 媒体能力接口（文生图/文生视频/图生视频/改图/超分）+ JobController
 │   ├── LLMProvider      # 文本 / AI 对话
 │   ├── TTSProvider      # 配音
 │   └── StorageProvider  # 持久化
 ├── plugins/
-│   ├── providers/       # 内置实现：mock / IndexedDB 存储
-│   └── register.ts      # 应用启动时注册全部插件
+│   ├── providers/       # 后端实现：mock / ComfyUI / DashScope / IndexedDB / HTTP LLM
+│   ├── features/        # 功能模块插件（角色/剧本/分镜/成片/任务/全流程/设置）
+│   └── register.ts      # 应用启动时注册全部插件（Provider + Feature）
 ├── stores/              # Pinia 状态（project/character/script/storyboard/job/plugin）
-├── features/            # 业务功能模块（characters/script/storyboard/player/jobs/composer/settings）
+├── features/            # 业务功能（characters/script/storyboard/player/jobs/composer/settings/comfyui）
 └── components/          # UI 基础件 + 布局
 ```
 
 ### 插件机制
 
-能力提供方（Provider）以插件形式接入，通过 `PluginRegistry` 注册，`PluginStore` 解析启用实例：
+**Provider = 后端连接，能力 = 后端能做的事**。Provider 数量 = 后端数量；每个 Provider 声明自己实现的能力清单：
 
-- **能力接口**：`MediaProvider`、`LLMProvider`、`TTSProvider`、`StorageProvider` 各定义一个插件实现。
-- **可切换**：UI 通过 `pluginStore.mediaProvider` / `llmProvider` 等计算属性拿到当前启用的实例；无后端时全部使用 mock。
+- **能力接口**：媒体能力拆分为 `text2image` / `text2video` / `image2video` / `editImage` / `upscale`，每个能力一个接口。Provider 声明 `capabilities: string[]` 说明实现哪些能力；`pluginStore.resolveInstanceCapability('media', 'text2image')` 按需解析——例如 active 是 DashScope（仅文生图）时，视频镜头会回退到其他启用的文生视频 Provider。
+- **模块插件化（FeaturePlugin）**：7 个功能模块全部是 FeaturePlugin，每个插件声明 `module { key, label, title, order }` + `component`。导航与主区由 `pluginStore.featureModules()` / `featureComponent(key)` 动态渲染。**新增模块 = 写一个插件文件 + 注册一行**，无需改 AppShell。
 - **配置持久化**：每个 Provider 的启停与参数保存于 localStorage（前缀 `ai-director:provider:`），启动时自动应用。
+- **任务生命周期**：媒体 Provider 复用 `createJobController`（任务注册 / 轮询 / 监听 / 取消 / 终态不可变），避免各实现重复手写。
 
 ### 添加自定义 Provider 插件
 
-1. 在 `src/plugins/providers/` 新建文件，实现对应能力接口，并导出 `createXxxPlugin()`（返回 `ProviderPlugin<T>`）。
+1. 在 `src/plugins/providers/` 新建文件，实现对应**能力接口**（如 `TextToImageCapability`），组合 `createJobController`，导出 `createXxxPlugin()`（返回 `ProviderPlugin<T>`，声明 `capabilities` 数组与 `configFields`）。
 2. 在 `src/plugins/register.ts` 的 `buildAppPlugins()` 中注册。
 
 示例（对接 OpenAI 兼容接口的 LLM）：
@@ -83,18 +85,40 @@ export function createLLMHttpPlugin(): ProviderPlugin<LLMProvider> {
 }
 ```
 
+### 添加自定义功能模块
+
+```ts
+// src/plugins/features/hello.ts
+import { defineComponent } from 'vue'
+import type { FeaturePlugin } from '../../core/plugin/types'
+
+export function createHelloFeaturePlugin(): FeaturePlugin {
+  return {
+    id: 'feature-hello',
+    name: '示例',
+    kind: 'feature',
+    featureId: 'hello',
+    enabled: true,
+    module: { key: 'hello', label: '示例', title: '示例模块', order: 99 },
+    component: defineComponent({ render: () => 'Hello' }),
+  }
+}
+```
+
+在 `register.ts` 的 `buildAppPlugins()` 中 `registry.register(createHelloFeaturePlugin())`，导航与主区自动出现该模块。
+
 ## 后端对接指南
 
 | 对接方式 | Provider | 说明 |
 |----------|----------|------|
 | 无后端（默认） | mock | 本地假实现，延迟模拟 + 占位图，便于开发与演示 |
 | OpenAI 兼容协议 | `llm-http` | 已内置：设置页填写地址（如 `https://api.deepseek.com/v1`）、密钥、模型名后「设为当前使用」即可；浏览器直连受 CORS 限制时需配代理 |
-| 本地 ComfyUI | `media-comfyui` | 已内置：设置页填写地址（如 `http://127.0.0.1:8188`）与工作流模板（API 格式，含 `{prompt}`/`{negative_prompt}`/`{seed}` 占位符），「设为当前使用」后生成立绘/出图走 ComfyUI |
+| 本地 ComfyUI | `media-comfyui` | 已内置：设置页填写地址（如 `http://127.0.0.1:8188`）→ 在「ComfyUI 工作流模板」导入 API 格式 JSON（自动识别提示词/负向/seed 节点，如 Qwen 三视图模板）→ 设为当前模板 → 生成时走 ComfyUI，WebSocket 实时进度 |
 | 阿里云 DashScope / 通义万相 | `media-dashscope` | 已内置：设置页填写 API Key 与模型名（默认 `wanx-v1`），异步任务 + 轮询，生成立绘走通义万相 |
-| 真实 REST 后端 | `media-http`（预留） | 在设置页配置 baseUrl / token / model，按 `llm-http` 模式实现 |
+| 真实 REST 后端 | `media-http`（预留） | 按 `llm-http` / 能力接口模式实现 |
 | 本地模型 | 同上述 Provider | 通过本地服务地址接入 |
 
-> 当前内置实现为 mock 与 IndexedDB 存储；`media-http` / `media-comfyui` 为预留接口，按上表约定即可接入。
+> 能力接口：文生图 / 文生视频 / 图生视频 / 改图 / 超分各为一个能力，Provider 声明 `capabilities` 清单，前端按镜头需求解析。
 
 ## 技术栈
 
@@ -104,3 +128,4 @@ Vue 3 · Vite · TypeScript · Pinia · Tailwind CSS · zod · Dexie · Vitest �
 
 - 设计文档：`docs/plans/2026-08-17-ai-director-design.md`
 - 实施计划：`docs/plans/2026-08-17-ai-director-implementation.md`
+- 插件体系重构设计：`docs/plans/2026-08-17-plugin-refactor-design.md`
