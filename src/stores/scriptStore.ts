@@ -16,6 +16,11 @@ export const useScriptStore = defineStore('script', () => {
     script.value = ScriptSchema.parse(next)
   }
 
+  /** 清空当前剧本（用于切换项目/新建项目） */
+  function clearScript(): void {
+    script.value = null
+  }
+
   function addScene(data: SceneInput = {}): Scene {
     if (!script.value) {
       script.value = ScriptSchema.parse({ id: newId('script'), title: '未命名剧本' })
@@ -145,6 +150,7 @@ export const useScriptStore = defineStore('script', () => {
     script,
     scenes,
     setScript,
+    clearScript,
     addScene,
     updateScene,
     removeScene,

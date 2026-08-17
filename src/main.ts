@@ -4,7 +4,7 @@ import './assets/main.css'
 import App from './App.vue'
 import { usePluginStore } from './stores/pluginStore'
 import { buildAppPlugins, applySavedProviderConfig } from './plugins/register'
-import { hydrateWorkspace, startWorkspaceAutoSave } from './features/shared/useWorkspacePersistence'
+import { useProjects } from './features/projects/useProjects'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -15,6 +15,6 @@ pluginStore.init(registry)
 applySavedProviderConfig(pluginStore)
 app.mount('#app')
 
-void hydrateWorkspace().then(() => {
-  startWorkspaceAutoSave()
+void useProjects().initProjects().then(() => {
+  useProjects().startAutoSave()
 })

@@ -50,7 +50,7 @@ function startResize(e: PointerEvent) {
 
 <template>
   <div class="flex h-screen flex-col overflow-hidden bg-panel text-ink">
-    <TopBar project-name="AI导演台" @settings="activeView = 'settings'" />
+    <TopBar @settings="activeView = 'settings'" />
 
     <div class="flex min-h-0 flex-1">
       <SideNav :modules="modules" :active="activeView" @select="activeView = $event" />
