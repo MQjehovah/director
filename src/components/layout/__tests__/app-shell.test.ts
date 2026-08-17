@@ -37,4 +37,11 @@ describe('app shell', () => {
     expect(w.text()).toContain('任务中心')
     expect(w.get('[data-test="jobs-drawer"]')).toBeTruthy()
   })
+
+  it('opens settings from the top bar settings button', async () => {
+    const w = mount(AppShell)
+    await w.get('[data-test="topbar-settings"]').trigger('click')
+    expect(w.text()).toContain('设置')
+    expect(w.get('[data-test="enabled-summary"]')).toBeTruthy()
+  })
 })

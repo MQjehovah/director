@@ -4,6 +4,10 @@ import { Button } from '../ui'
 defineProps<{
   projectName?: string
 }>()
+
+const emit = defineEmits<{
+  (e: 'settings'): void
+}>()
 </script>
 
 <template>
@@ -26,7 +30,7 @@ defineProps<{
         <span class="h-1.5 w-1.5 rounded-full bg-emerald-400" />
         Provider 就绪
       </span>
-      <Button variant="ghost" size="sm">设置</Button>
+      <Button variant="ghost" size="sm" data-test="topbar-settings" @click="emit('settings')">设置</Button>
       <Button variant="primary" size="sm">导出</Button>
     </div>
   </header>

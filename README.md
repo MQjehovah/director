@@ -1,4 +1,4 @@
-# AI 漫剧导演台 (AI Director Console)
+# AI导演台 (AI Director Console)
 
 一个面向 AI 漫剧（动画短剧）制作的导演台前端。通过插件化的 Provider 体系，前端可对接各种多模态大模型 / API、本地模型与 ComfyUI，覆盖「角色 → 剧本 → 分镜 → 生成 → 成片」的完整编排流程。
 

@@ -1,8 +1,8 @@
-# AI 漫剧导演台 — 前端实施计划
+# AI导演台 — 前端实施计划
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 构建一个插件化架构的 AI 漫剧导演台前端（Vue 3 + Vite + TS），包含角色编辑、剧本编辑、镜头编排、成片预览、任务队列与一键全流程。
+**Goal:** 构建一个插件化架构的 AI导演台前端（Vue 3 + Vite + TS），包含角色编辑、剧本编辑、镜头编排、成片预览、任务队列与一键全流程。
 
 **Architecture:** 稳定内核（core）定义领域模型与插件系统；Provider 能力接口（Media/LLM/TTS/Storage）由 mock 与真实实现插件分别实现，可切换；功能模块作为 FeaturePlugin 装配到界面；本地 IndexedDB 持久化为主。
 
