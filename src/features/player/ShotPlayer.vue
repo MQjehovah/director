@@ -8,9 +8,11 @@ const props = withDefaults(
   defineProps<{
     shot: Shot
     playing?: boolean
+    nextUrl?: string
   }>(),
   {
     playing: false,
+    nextUrl: undefined,
   },
 )
 
@@ -69,12 +71,69 @@ const kenBurnsStyle = computed(() => ({
   animationPlayState: props.playing ? 'running' : 'paused',
 }))
 
-const videoRef = ref<HTMLVideoElement | null>(null)
-let resumeTimer: ReturnType<typeof setInterval> | undefined
-let hasStarted = false
+// ---- A/B 双缓冲：当前段播放时预载下一段，切镜时瞬间切换，避免闪黑 ----
+const videoA = ref<HTMLVideoElement | null>(null)
+const videoB = ref<HTMLVideoElement | null>(null)
+const activeEl = ref<'a' | 'b'>('a')
+const activeVideo = computed(() => (activeEl.value === 'a' ? videoA.value : videoB.value))
+const inactiveVideo = computed(() => (activeEl.value === 'a' ? videoB.value : videoA.value))
+const preloadedUrl = ref<string | undefined>(undefined)
 
-// 视频元素按资产重建：切镜/重生成后重置“已开始播放”标志，
-// 避免上一段的状态泄漏导致新镜头加载期的 pause 被误同步。
+let hasStarted = false
+let resumeTimer: ReturnType<typeof setInterval> | undefined
+
+function setVideoSrc(el: HTMLVideoElement | null, url: string | undefined): void {
+  if (!el) return
+  if (!url) {
+    el.removeAttribute('src')
+    return
+  }
+  if (el.getAttribute('src') !== url) el.src = url
+}
+
+function playVideo(el: HTMLVideoElement | null): void {
+  if (!el || !props.playing) return
+  try {
+    const result = el.play()
+    if (result && typeof result.catch === 'function') result.catch(() => {})
+  } catch {
+    // 测试环境（jsdom）不支持媒体播放时静默
+  }
+}
+
+function isActive(video: HTMLVideoElement | null): boolean {
+  return video !== null && video === activeVideo.value
+}
+
+// 镜头/资产变化：预载命中则直接切换可见元素，否则当前元素换源
+watch(
+  () => [assetId.value, resolvedUrl.value, videoA.value, videoB.value] as const,
+  () => {
+    const url = resolvedUrl.value
+    if (preloadedUrl.value && preloadedUrl.value === url && inactiveVideo.value) {
+      activeEl.value = activeEl.value === 'a' ? 'b' : 'a'
+      preloadedUrl.value = undefined
+    } else {
+      preloadedUrl.value = undefined
+      setVideoSrc(activeVideo.value, url)
+    }
+    playVideo(activeVideo.value)
+  },
+  { immediate: true, flush: 'post' },
+)
+
+// 把下一段视频预载到非可见元素
+watch(
+  () => [props.nextUrl, videoA.value, videoB.value] as const,
+  ([url]) => {
+    if (!url) return
+    setVideoSrc(inactiveVideo.value, url)
+    preloadedUrl.value = url
+  },
+  { immediate: true, flush: 'post' },
+)
+
+// 切镜/重生成后重置“已开始播放”标志，避免加载期误报 pause 拉停连播
 watch(
   () => assetId.value,
   () => {
@@ -83,21 +142,16 @@ watch(
   { immediate: true },
 )
 
-// 播放自愈：成片处于播放态时，若视频已加载却被暂停（起播竞态/误停），自动恢复播放
+// 播放自愈：成片处于播放态时，若视频已加载却被暂停，自动恢复播放
 watch(
   () => props.playing,
   (playing) => {
     if (playing && resumeTimer === undefined) {
       resumeTimer = setInterval(() => {
-        const video = videoRef.value
+        const video = activeVideo.value
         if (!video || !props.playing) return
         if (video.paused && !video.ended && video.readyState >= 2) {
-          try {
-            const result = video.play()
-            if (result && typeof result.catch === 'function') result.catch(() => {})
-          } catch {
-            // 环境不支持时忽略
-          }
+          playVideo(video)
         }
       }, 300)
     } else if (!playing && resumeTimer !== undefined) {
@@ -115,78 +169,49 @@ onBeforeUnmount(() => {
   }
 })
 
-// 用指令式 play/pause 与成片播放状态同步：autoplay 属性在运行中切换并不可靠，
-// 且只靠它无法在暂停时真正暂停视频。
-watch(
-  () => [props.playing, props.shot.id, resolvedUrl.value] as const,
-  () => {
-    const video = videoRef.value
-    if (!video) return
-    try {
-      if (props.playing) {
-        const result = video.play()
-        if (result && typeof result.catch === 'function') result.catch(() => {})
-      } else {
-        video.pause()
-      }
-    } catch {
-      // 测试环境（jsdom）不支持媒体播放时静默
-    }
-  },
-  { immediate: true, flush: 'post' },
-)
-
-function reportDuration(): void {
-  const video = videoRef.value
-  if (!video) return
+function reportDuration(e: Event): void {
+  const video = e.target as HTMLVideoElement
+  if (!isActive(video)) return
   const d = video.duration
   if (Number.isFinite(d) && d > 0) {
     emit('video-duration', props.shot.id, d)
     // 切镜/重生成后元素刚挂载、src 未就绪时 play() 会被拒绝；元数据就绪后补一次播放
-    if (props.playing) {
-      try {
-        const result = video.play()
-        if (result && typeof result.catch === 'function') result.catch(() => {})
-      } catch {
-        // 环境不支持时忽略
-      }
-    }
+    playVideo(video)
   }
 }
 
-function onTimeUpdate(): void {
-  const video = videoRef.value
-  if (!video) return
+function onTimeUpdate(e: Event): void {
+  const video = e.target as HTMLVideoElement
+  if (!isActive(video)) return
   emit('video-time', props.shot.id, video.currentTime)
 }
 
-function onCanPlay(): void {
-  // 数据足够开始播放时就起播，不必等整段加载完
-  if (!props.playing) return
-  try {
-    const result = videoRef.value?.play()
-    if (result && typeof result.catch === 'function') result.catch(() => {})
-  } catch {
-    // 环境不支持时忽略
-  }
+function onCanPlay(e: Event): void {
+  const video = e.target as HTMLVideoElement
+  if (!isActive(video)) return
+  playVideo(video)
 }
 
-function onPlay(): void {
+function onPlay(e: Event): void {
+  if (!isActive(e.target as HTMLVideoElement)) return
   hasStarted = true
   emit('video-play', props.shot.id)
 }
 
-function onPause(): void {
-  // 加载/初始化阶段浏览器可能误发 pause 事件：只有真正开始播放过后才同步成片状态，
-  // 避免第三段刚加载就被误判为“用户暂停”而把连播停掉。
+function onPause(e: Event): void {
+  const video = e.target as HTMLVideoElement
+  if (!isActive(video)) return
+  // 加载/初始化阶段浏览器可能误发 pause：只有真正开始播放过后才同步成片状态
   if (!hasStarted) return
-  const video = videoRef.value
   // 自然播到结尾时浏览器会在 ended 前后触发 pause：不算用户暂停，不能拉停成片
-  if (video) {
-    if (video.ended) return
-    if (video.duration > 0 && video.currentTime >= video.duration - 0.15) return
-  }
+  if (video.ended) return
+  if (video.duration > 0 && video.currentTime >= video.duration - 0.15) return
   emit('video-pause', props.shot.id)
+}
+
+function onEnded(e: Event): void {
+  if (!isActive(e.target as HTMLVideoElement)) return
+  emit('video-ended', props.shot.id)
 }
 </script>
 
@@ -213,26 +238,42 @@ function onPause(): void {
         待生成
       </span>
     </template>
-    <video
-      v-else
-      ref="videoRef"
-      :key="assetId"
-      :src="resolvedUrl"
-      controls
-      muted
-      playsinline
-      preload="auto"
-      class="h-full w-full object-contain"
-      data-test="shot-video"
-      @loadedmetadata="reportDuration"
-      @durationchange="reportDuration"
-      @timeupdate="onTimeUpdate"
-      @canplay="onCanPlay"
-      @loadeddata="onCanPlay"
-      @ended="emit('video-ended', shot.id)"
-      @play="onPlay"
-      @pause="onPause"
-    />
+    <template v-else>
+      <video
+        ref="videoA"
+        v-show="activeEl === 'a'"
+        :data-test="activeEl === 'a' ? 'shot-video' : undefined"
+        muted
+        playsinline
+        preload="auto"
+        class="h-full w-full object-contain"
+        @loadedmetadata="reportDuration"
+        @durationchange="reportDuration"
+        @timeupdate="onTimeUpdate"
+        @canplay="onCanPlay"
+        @loadeddata="onCanPlay"
+        @ended="onEnded"
+        @play="onPlay"
+        @pause="onPause"
+      />
+      <video
+        ref="videoB"
+        v-show="activeEl === 'b'"
+        :data-test="activeEl === 'b' ? 'shot-video' : undefined"
+        muted
+        playsinline
+        preload="auto"
+        class="h-full w-full object-contain"
+        @loadedmetadata="reportDuration"
+        @durationchange="reportDuration"
+        @timeupdate="onTimeUpdate"
+        @canplay="onCanPlay"
+        @loadeddata="onCanPlay"
+        @ended="onEnded"
+        @play="onPlay"
+        @pause="onPause"
+      />
+    </template>
   </div>
 </template>
 

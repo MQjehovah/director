@@ -282,7 +282,7 @@ describe('shot player', () => {
     expect(w.get('[data-test="shot-video"]').classes()).toContain('object-contain')
   })
 
-  it('remounts the video element when the shot asset is regenerated', async () => {
+  it('updates the video source when the shot asset is regenerated', async () => {
     const store = useStoryboardStore()
     const shot = store.addShot({
       shotType: 'video',
@@ -290,12 +290,9 @@ describe('shot player', () => {
     })
     const w = mount(ShotPlayer, { props: { shot } })
     await flushPromises()
-    const first = w.get('[data-test="shot-video"]').element
     await w.setProps({ shot: { ...shot, mediaAssets: ['https://example.com/new.mp4'] } })
     await flushPromises()
-    const second = w.get('[data-test="shot-video"]').element
-    expect(second).not.toBe(first)
-    expect(second.getAttribute('src')).toContain('new.mp4')
+    expect(w.get('[data-test="shot-video"]').attributes('src')).toContain('new.mp4')
   })
 
   it('emits video-ended with the shot id when the video ends', async () => {

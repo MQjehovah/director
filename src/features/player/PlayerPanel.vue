@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { Button, Progress } from '../../components/ui'
 import { usePlayer } from './usePlayer'
@@ -13,6 +13,7 @@ const player = usePlayer(store.shots)
 const actions = useShotActions()
 const measuredAssets = new Set<string>()
 const warmingUrls = new Set<string>()
+const nextVideoUrl = ref<string | undefined>(undefined)
 
 /** 读取视频真实时长（浏览器元数据），用于按实际长度排列时间线/总时长/字幕 */
 function measureVideoDuration(url: string): Promise<number> {
@@ -47,17 +48,20 @@ function warmVideoMetadata(url: string): Promise<void> {
 
 watch(
   () => player.currentIndex.value,
-  () => {
-    // 预热当前镜头之后的 1~2 段视频，减少切镜停顿
+  async () => {
+    // 预热当前镜头之后的 1~2 段视频，并把紧邻的下一段 URL 交给播放器预载（双缓冲）
+    let nextUrl: string | undefined
     for (let i = 1; i <= 2; i += 1) {
       const next = store.shots[player.currentIndex.value + i]
       if (!next || next.shotType !== 'video') continue
       const asset = displayAssetOf(next)
       if (!asset) continue
-      void actions.resolveAssetUrl(asset).then((url) => {
-        if (url) void warmVideoMetadata(url)
-      })
+      const url = await actions.resolveAssetUrl(asset)
+      if (!url) continue
+      if (!nextUrl) nextUrl = url
+      void warmVideoMetadata(url)
     }
+    nextVideoUrl.value = nextUrl
   },
   { immediate: true },
 )
@@ -108,6 +112,7 @@ function widthPct(shot: Shot): number {
           v-if="player.currentShot.value"
           :shot="player.currentShot.value"
           :playing="player.playing.value"
+          :next-url="nextVideoUrl"
           @video-duration="player.setVideoDuration"
           @video-time="player.setVideoTime"
           @video-ended="player.videoEnded"
