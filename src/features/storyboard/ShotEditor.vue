@@ -8,7 +8,7 @@ import type { Shot } from '../../core/models'
 
 type CameraShape = NonNullable<Shot['camera']>
 
-const DEFAULT_CAMERA: CameraShape = { shotSize: 'medium', angle: 'eye-level', move: 'static', duration: 4 }
+const DEFAULT_CAMERA: CameraShape = { shotSize: 'medium', angle: 'eye-level', move: 'static', duration: 5 }
 
 const props = defineProps<{ shotId: string }>()
 

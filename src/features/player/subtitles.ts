@@ -42,7 +42,7 @@ interface ShotWithFallbacks {
   dialogue?: string
 }
 
-const DEFAULT_DURATION = 4
+const DEFAULT_DURATION = 5
 
 export function shotDuration(shot: Shot): number {
   return shot.camera?.duration ?? (shot as ShotWithFallbacks).duration ?? DEFAULT_DURATION

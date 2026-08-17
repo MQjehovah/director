@@ -34,33 +34,51 @@ const beatOptions = computed<SelectOption[]>(() => {
   }))
 })
 
+// 按场次分组的镜头：每场一组 + 无场次镜头一组
+const sceneGroups = computed<Array<{ sceneId: string | null; title: string; shots: Shot[] }>>(() => {
+  const groups: Array<{ sceneId: string | null; title: string; shots: Shot[] }> = []
+  for (const scene of scriptStore.scenes) {
+    const shots = store.shotsForScene(scene.id)
+    if (shots.length > 0) {
+      groups.push({ sceneId: scene.id, title: scene.title || '未命名场次', shots })
+    }
+  }
+  const unassigned = store.shots.filter((s) => !s.sceneId)
+  if (unassigned.length > 0) {
+    groups.push({ sceneId: null, title: '未归入场次', shots: unassigned })
+  }
+  return groups
+})
+
 function beatText(type: string, b: { dialogue?: { speaker?: string; text?: string }; action?: string }): string {
   if (type === 'dialogue') return `${b.dialogue?.speaker ?? ''}：${b.dialogue?.text ?? ''}`
   if (type === 'sfx') return `音效：${b.action ?? ''}`
   return b.action ?? ''
 }
 
-function openAdd(): void {
-  sourceSceneId.value = scriptStore.scenes[0]?.id ?? ''
+function openAdd(sceneId?: string): void {
+  sourceSceneId.value = sceneId ?? scriptStore.scenes[0]?.id ?? ''
   sourceBeatId.value = ''
   shotType.value = 'image'
   addOpen.value = true
 }
 
 function onAdd(): void {
+  const sceneId = sourceSceneId.value || undefined
   if (sourceBeatId.value) {
     const scene = scriptStore.scenes.find((s) => s.id === sourceSceneId.value)
     const beat = scene?.beats.find((b) => b.id === sourceBeatId.value)
     if (beat) {
       const shot = store.addShot({
         shotType: shotType.value,
+        sceneId,
         beatRef: beat.id,
         prompt: beatText(beat.type, beat) || undefined,
       })
       selectedShotId.value = shot.id
     }
   } else {
-    const shot = store.addShot({ shotType: shotType.value })
+    const shot = store.addShot({ shotType: shotType.value, sceneId })
     selectedShotId.value = shot.id
   }
   addOpen.value = false
@@ -110,7 +128,7 @@ function selectShot(id: string): void {
         >
           时间轴
         </Button>
-        <Button variant="primary" size="sm" data-test="add-shot" @click="openAdd">
+        <Button variant="primary" size="sm" data-test="add-shot" @click="openAdd()">
           + 添加镜头
         </Button>
       </div>
@@ -136,7 +154,28 @@ function selectShot(id: string): void {
 
     <div v-else class="flex min-h-0 flex-1 gap-4">
       <div class="min-w-0 flex-1 overflow-y-auto">
-        <ShotGrid v-if="view === 'grid'" :selected-shot-id="selectedShotId" @select="selectShot" />
+        <template v-if="view === 'grid'">
+          <div v-for="group in sceneGroups" :key="group.sceneId ?? 'unassigned'" class="mb-6">
+            <div class="mb-2 flex items-center justify-between">
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                {{ group.title }}
+              </h3>
+              <Button
+                size="sm"
+                variant="outline"
+                data-test="add-shot-to-scene"
+                @click="openAdd(group.sceneId ?? undefined)"
+              >
+                + 添加镜头
+              </Button>
+            </div>
+            <ShotGrid
+              :shots="group.shots"
+              :selected-shot-id="selectedShotId"
+              @select="selectShot"
+            />
+          </div>
+        </template>
         <ShotTimeline v-else :selected-shot-id="selectedShotId" @select="selectShot" />
       </div>
       <ShotEditor

@@ -22,7 +22,7 @@ const shotTypeLabel: Record<Shot['shotType'], string> = {
 }
 
 function durationOf(shot: Shot): number {
-  return shot.camera?.duration ?? 4
+  return shot.camera?.duration ?? 5
 }
 
 function widthPct(shot: Shot): string {

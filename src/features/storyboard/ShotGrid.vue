@@ -5,7 +5,13 @@ import { useShotActions } from './useShotActions'
 import { Badge, Progress } from '../../components/ui'
 import type { Job, Shot } from '../../core/models'
 
-defineProps<{ selectedShotId?: string }>()
+const props = withDefaults(
+  defineProps<{
+    selectedShotId?: string
+    shots?: Shot[]
+  }>(),
+  { shots: undefined },
+)
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
@@ -15,9 +21,12 @@ const emit = defineEmits<{
 const store = useStoryboardStore()
 const actions = useShotActions()
 
-const dragIndex = ref<number | undefined>(undefined)
+const dragId = ref<string | undefined>(undefined)
 
-const assetIds = computed(() => store.shots.flatMap((s) => s.mediaAssets))
+// 传入 shots 时按传入渲染（分组场景用），否则渲染 store 全部镜头
+const visibleShots = computed<Shot[]>(() => props.shots ?? store.shots)
+
+const assetIds = computed(() => visibleShots.value.flatMap((s) => s.mediaAssets))
 
 watch(
   assetIds,
@@ -56,8 +65,10 @@ function statusInfo(
   }
 }
 
-function move(delta: -1 | 1, index: number): void {
-  store.moveShot(index, index + delta)
+function move(delta: -1 | 1, shotId: string): void {
+  const from = store.shots.findIndex((s) => s.id === shotId)
+  if (from < 0) return
+  store.moveShot(from, from + delta)
 }
 
 async function removeShot(id: string): Promise<void> {
@@ -66,8 +77,8 @@ async function removeShot(id: string): Promise<void> {
   emit('remove', id)
 }
 
-function onDragStart(e: DragEvent, index: number): void {
-  dragIndex.value = index
+function onDragStart(e: DragEvent, shotId: string): void {
+  dragId.value = shotId
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
 }
 
@@ -76,12 +87,15 @@ function onDragOver(e: DragEvent): void {
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
 }
 
-function onDrop(e: DragEvent, toIndex: number): void {
+function onDrop(e: DragEvent, shotId: string): void {
   e.preventDefault()
-  const from = dragIndex.value
-  dragIndex.value = undefined
-  if (from === undefined || from === toIndex) return
-  store.moveShot(from, toIndex)
+  const fromId = dragId.value
+  dragId.value = undefined
+  if (!fromId || fromId === shotId) return
+  const from = store.shots.findIndex((s) => s.id === fromId)
+  const to = store.shots.findIndex((s) => s.id === shotId)
+  if (from < 0 || to < 0) return
+  store.moveShot(from, to)
 }
 </script>
 
@@ -101,12 +115,12 @@ function onDrop(e: DragEvent, toIndex: number): void {
         class="flex flex-col gap-2 rounded-lg border border-edge bg-raised p-3 transition-colors"
         :class="[
           shot.id === selectedShotId ? 'border-amber-400/60 ring-1 ring-amber-400/40' : '',
-          dragIndex === index ? 'opacity-50' : '',
+          dragId === shot.id ? 'opacity-50' : '',
         ]"
-        @dragstart="onDragStart($event, index)"
+        @dragstart="onDragStart($event, shot.id)"
         @dragover="onDragOver"
-        @drop="onDrop($event, index)"
-        @dragend="dragIndex = undefined"
+        @drop="onDrop($event, shot.id)"
+        @dragend="dragId = undefined"
       >
         <button
           type="button"
@@ -139,7 +153,7 @@ function onDrop(e: DragEvent, toIndex: number): void {
           </span>
           <span class="mt-2 flex flex-wrap items-center gap-2">
             <Badge>{{ shotTypeLabel[shot.shotType] }}</Badge>
-            <span class="text-[10px] text-ink-muted">{{ shot.camera?.duration ?? 4 }}s</span>
+            <span class="text-[10px] text-ink-muted">{{ shot.camera?.duration ?? 5 }}s</span>
             <Badge v-if="statusInfo(shot.id)" :variant="statusInfo(shot.id)?.variant">
               {{ statusInfo(shot.id)?.text }}
             </Badge>
@@ -154,7 +168,7 @@ function onDrop(e: DragEvent, toIndex: number): void {
               data-test="shot-move-up"
               :disabled="index === 0"
               class="rounded-md px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink disabled:opacity-40"
-              @click="move(-1, index)"
+              @click="move(-1, shot.id)"
             >
               ↑
             </button>
@@ -162,9 +176,9 @@ function onDrop(e: DragEvent, toIndex: number): void {
               type="button"
               aria-label="后移"
               data-test="shot-move-down"
-              :disabled="index === store.shots.length - 1"
+              :disabled="index === visibleShots.length - 1"
               class="rounded-md px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink disabled:opacity-40"
-              @click="move(1, index)"
+              @click="move(1, shot.id)"
             >
               ↓
             </button>

@@ -15,7 +15,11 @@ export const useStoryboardStore = defineStore('storyboard', () => {
   }
 
   function addShot(data: ShotInput): Shot {
-    const shot = ShotSchema.parse({ id: nextShotId(), ...data })
+    const shot = ShotSchema.parse({
+      id: nextShotId(),
+      ...data,
+      camera: data.camera ?? { shotSize: 'medium', angle: 'eye-level', move: 'static', duration: 5 },
+    })
     shots.value.push(shot)
     return shot
   }
@@ -63,14 +67,16 @@ export const useStoryboardStore = defineStore('storyboard', () => {
   }
 
   function cutSceneToShots(scene: Scene): Shot[] {
-    const beatIds = new Set(scene.beats.map((b) => b.id))
-    shots.value = shots.value.filter((s) => !(s.beatRef && beatIds.has(s.beatRef)))
+    // 按场次清理：重新切分该场次时，移除该场次原有镜头
+    shots.value = shots.value.filter((s) => s.sceneId !== scene.id)
     const created: Shot[] = []
     for (const beat of scene.beats) {
       const shot = ShotSchema.parse({
         id: nextShotId(),
+        sceneId: scene.id,
         beatRef: beat.id,
         shotType: 'image',
+        camera: { shotSize: 'medium', angle: 'eye-level', move: 'static', duration: 5 },
         prompt: beat.action ?? beat.dialogue?.text,
       })
       created.push(shot)
@@ -81,6 +87,10 @@ export const useStoryboardStore = defineStore('storyboard', () => {
 
   function getShotsByBeat(beatId: string): Shot[] {
     return shots.value.filter((s) => s.beatRef === beatId)
+  }
+
+  function shotsForScene(sceneId: string): Shot[] {
+    return shots.value.filter((s) => s.sceneId === sceneId)
   }
 
   function shotById(id: string): Shot | undefined {
@@ -96,6 +106,7 @@ export const useStoryboardStore = defineStore('storyboard', () => {
     reorder,
     cutSceneToShots,
     getShotsByBeat,
+    shotsForScene,
     shotById,
     restoreShots,
   }
