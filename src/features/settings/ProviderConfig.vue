@@ -20,11 +20,16 @@ const config = reactive<ProviderConfig>({
   ...loadProviderConfig(props.provider.id),
 })
 
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+
 watch(
   config,
   () => {
-    saveProviderConfig(props.provider.id, { ...config })
-    emit('changed')
+    if (saveTimer !== undefined) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      saveProviderConfig(props.provider.id, { ...config })
+      emit('changed')
+    }, 300)
   },
   { deep: true },
 )

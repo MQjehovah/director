@@ -41,7 +41,11 @@ export function loadProviderConfig(id: string): ProviderConfig | undefined {
 }
 
 export function saveProviderConfig(id: string, config: ProviderConfig): void {
-  localStorage.setItem(storageKey(id), JSON.stringify(config))
+  try {
+    localStorage.setItem(storageKey(id), JSON.stringify(config))
+  } catch {
+    // storage may be unavailable (privacy mode / quota); ignore silently
+  }
 }
 
 export function clearProviderConfig(id: string): void {

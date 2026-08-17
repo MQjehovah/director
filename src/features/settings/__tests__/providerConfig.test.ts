@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import ProviderConfig from '../ProviderConfig.vue'
 import SettingsPanel from '../SettingsPanel.vue'
@@ -94,6 +94,10 @@ describe('provider config', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.clear()
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('toggles provider and persists', async () => {
@@ -104,6 +108,7 @@ describe('provider config', () => {
     expect(store.isEnabled('mock')).toBe(true)
     await w.find('input[type=checkbox]').setValue(false)
     expect(store.isEnabled('mock')).toBe(false)
+    await vi.runAllTimersAsync()
     expect(loadProviderConfig('mock')?.enabled).toBe(false)
   })
 
@@ -122,6 +127,7 @@ describe('provider config', () => {
     await w.get('[data-test="config-base-url"]').setValue('http://example.com')
     await w.get('[data-test="config-api-key"]').setValue('sk-test')
     await w.get('[data-test="config-model"]').setValue('flux')
+    await vi.runAllTimersAsync()
     expect(loadProviderConfig('mock')).toMatchObject({
       baseUrl: 'http://example.com',
       apiKey: 'sk-test',
