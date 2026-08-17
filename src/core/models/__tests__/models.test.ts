@@ -31,11 +31,13 @@ describe('domain models', () => {
     const s = SceneSchema.parse({
       id: 'sc1',
       title: '屋顶',
+      description: '破败的天台',
       artMode: 'img2img',
       sceneImage: 'asset-1',
       referenceImages: ['asset-ref'],
     })
     expect(s.artMode).toBe('img2img')
+    expect(s.description).toBe('破败的天台')
     expect(s.sceneImage).toBe('asset-1')
     expect(s.referenceImages).toEqual(['asset-ref'])
     expect(s.metadata).toEqual({})

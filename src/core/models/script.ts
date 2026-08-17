@@ -23,6 +23,8 @@ export const SceneSchema = z.object({
   title: z.string().optional(),
   location: z.string().optional(),
   timeOfDay: z.string().optional(),
+  // 场景描述：环境、氛围、布景、光线等，用于场景图生成与分镜提示词
+  description: z.string().optional(),
   beats: z.array(BeatSchema).default([]),
   // 场景图生成方式：auto（有参考图走图生图，否则文生图）/ 强制文生图 / 强制图生图
   artMode: SceneArtModeSchema.optional(),

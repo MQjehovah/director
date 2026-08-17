@@ -154,8 +154,6 @@ async function onRewrite(beat: Beat): Promise<void> {
 
 <template>
   <div class="flex flex-col gap-3">
-    <h3 class="text-sm font-semibold text-ink">叙事节拍</h3>
-
     <p v-if="beats.length === 0" class="text-sm text-ink-muted" data-test="beats-empty">
       暂无节拍，点击「添加节拍」创建。
     </p>

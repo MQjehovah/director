@@ -79,7 +79,8 @@ export const useStoryboardStore = defineStore('storyboard', () => {
     // 按场次清理：重新切分该场次时，移除该场次原有镜头
     shots.value = shots.value.filter((s) => s.sceneId !== scene.id)
     const created: Shot[] = []
-    const context = [scene.location, scene.timeOfDay].filter(Boolean).join('，')
+    const context =
+      scene.description?.trim() || [scene.location, scene.timeOfDay].filter(Boolean).join('，')
     for (const beat of scene.beats) {
       const shot = ShotSchema.parse({
         id: nextShotId(),

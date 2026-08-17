@@ -38,7 +38,7 @@ export const CUT_SCENE_SHOTS_PROMPT =
   '- 对话强调表情时用特写+固定机位，动作场面用中景/全景+运镜，戏剧高潮可用 video 镜头。\n' +
   '- 同一场次的镜头保持场景一致（地点、时间、光线）。\n' +
   '- 只输出 JSON，不要任何额外说明或代码块标记。\n\n' +
-  '场次标题：{title}\n地点：{location}\n时间：{timeOfDay}\n\n节拍列表：\n{beats}\n\n' +
+  '{sceneInfo}\n\n节拍列表：\n{beats}\n\n' +
   '输出一个 JSON 对象，包含 shots 数组，字段与取值如上所述。'
 
 export interface LlmShotSpec {
@@ -65,10 +65,14 @@ function serializeBeatsForCut(scene: Scene): string {
 }
 
 function buildCutPrompt(scene: Scene): string {
-  return CUT_SCENE_SHOTS_PROMPT.replace('{title}', scene.title ?? '未命名场次')
-    .replace('{location}', scene.location ?? '未知')
-    .replace('{timeOfDay}', scene.timeOfDay ?? '不明')
-    .replace('{beats}', serializeBeatsForCut(scene))
+  const lines = [`场次标题：${scene.title ?? '未命名场次'}`]
+  lines.push(`场景描述：${scene.description?.trim() || '无'}`)
+  if (scene.location) lines.push(`地点：${scene.location}`)
+  if (scene.timeOfDay) lines.push(`时间：${scene.timeOfDay}`)
+  return CUT_SCENE_SHOTS_PROMPT.replace('{sceneInfo}', lines.join('\n')).replace(
+    '{beats}',
+    serializeBeatsForCut(scene),
+  )
 }
 
 function parseLlmShots(text: string, scene: Scene): LlmShotSpec[] | undefined {
@@ -128,6 +132,9 @@ export function buildScenePrompt(scene: Scene | undefined): string {
   if (!scene) return ''
   const stored = scene.metadata?.imagePrompt
   if (typeof stored === 'string' && stored.trim().length > 0) return stored
+  // 场景描述就是该场的通用 prompt；旧数据的 地点/时间 作为回退
+  const description = scene.description?.trim()
+  if (description) return `${description}场景概念图，动画风格`
   const parts = [scene.location, scene.timeOfDay].filter(Boolean)
   return parts.length > 0 ? `${parts.join('，')}场景概念图，动画风格` : '场景概念图，动画风格'
 }
@@ -180,7 +187,10 @@ export function useScriptFeatures() {
 
   function applyLlmShots(sceneId: string, specs: LlmShotSpec[]): Shot[] {
     const scene = scriptStore.scenes.find((s) => s.id === sceneId)
-    const context = scene ? [scene.location, scene.timeOfDay].filter(Boolean).join('，') : ''
+    const context = scene
+      ? scene.description?.trim() ||
+        [scene.location, scene.timeOfDay].filter(Boolean).join('，')
+      : ''
     storyboardStore.removeSceneShots(sceneId)
     const created: Shot[] = []
     for (const spec of specs) {

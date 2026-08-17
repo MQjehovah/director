@@ -426,7 +426,12 @@ describe('useShotActions', () => {
   it('cutSceneToShots carries the scene image and scene context into shot metadata', () => {
     const scriptStore = useScriptStore()
     const storyboard = useStoryboardStore()
-    const scene = scriptStore.addScene({ title: '屋顶', location: '屋顶', timeOfDay: '夜景' })
+    const scene = scriptStore.addScene({
+      title: '屋顶',
+      location: '屋顶',
+      timeOfDay: '夜景',
+      description: '破败的天台',
+    })
     scriptStore.addBeat(scene.id, { type: 'action', action: '少年抬头' })
     scriptStore.updateScene(scene.id, { sceneImage: 'scene-asset-1' })
     const updated = scriptStore.scenes.find((s) => s.id === scene.id)
@@ -434,7 +439,7 @@ describe('useShotActions', () => {
     const shots = storyboard.cutSceneToShots(updated!)
     expect(shots).toHaveLength(1)
     expect(shots[0].metadata.sceneImageAssetId).toBe('scene-asset-1')
-    expect(shots[0].metadata.sceneContext).toBe('屋顶，夜景')
+    expect(shots[0].metadata.sceneContext).toBe('破败的天台')
   })
 
   it('generateMedia uses text2video for a video shot without an image asset', async () => {

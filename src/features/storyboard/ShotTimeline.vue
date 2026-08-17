@@ -35,12 +35,6 @@ function durationOf(shot: Shot): number {
   return shot.camera?.duration ?? 5
 }
 
-function widthPct(shot: Shot): string {
-  const denom = totalDuration.value
-  const pct = denom > 0 ? (durationOf(shot) / denom) * 100 : 0
-  return `${Math.max(pct, 6)}%`
-}
-
 function activeJobOf(shotId: string): Job | undefined {
   const job = actions.jobForShot(shotId)
   return job && (job.status === 'queued' || job.status === 'running') ? job : undefined
@@ -66,15 +60,18 @@ function thumbIsVideo(assetId: string | undefined): boolean {
       <span class="text-xs text-ink-muted">总时长 {{ totalDuration }}s</span>
     </div>
 
-    <div v-if="store.shots.length > 0" data-test="timeline" class="flex w-full items-stretch gap-1">
+    <div
+      v-if="store.shots.length > 0"
+      data-test="timeline"
+      class="flex w-full items-stretch gap-1 overflow-x-auto"
+    >
       <button
         v-for="(shot, index) in store.shots"
         :key="shot.id"
         type="button"
         data-test="timeline-shot"
-        class="flex min-w-0 flex-col gap-1 overflow-hidden rounded-md border border-edge bg-raised p-1 text-left transition-colors hover:border-zinc-600"
+        class="flex min-w-40 flex-1 flex-col gap-1 overflow-hidden rounded-md border border-edge bg-raised p-1 text-left transition-colors hover:border-zinc-600"
         :class="shot.id === selectedShotId ? 'border-amber-400/60' : ''"
-        :style="{ flex: `1 1 ${widthPct(shot)}`, minWidth: '64px' }"
         @click="emit('select', shot.id)"
       >
         <span class="relative block aspect-video w-full overflow-hidden rounded border border-edge bg-zinc-900">

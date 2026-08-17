@@ -9,7 +9,7 @@ import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { useCharacterStore } from '../../../stores/characterStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useJobStore } from '../../../stores/jobStore'
-import { useScriptFeatures } from '../useScriptFeatures'
+import { buildScenePrompt, useScriptFeatures } from '../useScriptFeatures'
 import { PluginRegistry } from '../../../core'
 import type { Asset } from '../../../core/models'
 import { createStubLLMPlugin, createStubMediaPlugin } from '../../shared/__tests__/stubProviders'
@@ -208,14 +208,20 @@ describe('scene editor', () => {
     setActivePinia(createPinia())
   })
 
-  it('updates scene title and location', async () => {
+  it('updates the scene title', async () => {
     const store = useScriptStore()
     const scene = store.addScene({ title: '屋顶' })
     const w = mount(SceneEditor, { props: { sceneId: scene.id } })
     await w.get('[data-test="scene-title"]').setValue('雨夜')
-    await w.get('[data-test="scene-location"]').setValue('天台')
     expect(store.scenes[0].title).toBe('雨夜')
-    expect(store.scenes[0].location).toBe('天台')
+  })
+
+  it('edits the scene description', async () => {
+    const store = useScriptStore()
+    const scene = store.addScene({ title: '屋顶' })
+    const w = mount(SceneEditor, { props: { sceneId: scene.id } })
+    await w.get('[data-test="scene-description"]').setValue('破败的天台，傍晚橘色光线')
+    expect(store.scenes[0].description).toBe('破败的天台，傍晚橘色光线')
   })
 
   it('generates a scene image via img2img when a reference image exists', async () => {
@@ -541,5 +547,19 @@ describe('useScriptFeatures', () => {
     expect(script.scenes).toHaveLength(1)
     expect(script.scenes[0].beats).toHaveLength(2)
     expect(useScriptStore().script?.scenes).toHaveLength(1)
+  })
+
+  it('buildScenePrompt includes the scene description', () => {
+    const scene = {
+      id: 'sc1',
+      title: '屋顶',
+      location: '屋顶',
+      timeOfDay: '夜景',
+      description: '破败的老式天台，灰蓝色调',
+      beats: [],
+      referenceImages: [],
+      metadata: {},
+    }
+    expect(buildScenePrompt(scene)).toContain('破败的老式天台，灰蓝色调')
   })
 })
