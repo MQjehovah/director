@@ -209,7 +209,7 @@ async function onGeneratePortrait(): Promise<void> {
 
     <div class="flex flex-col gap-4 p-4">
       <label class="block text-xs font-medium text-ink-muted">
-        姓名
+        角色名
         <Input
           class="mt-1"
           :model-value="character.name"
@@ -219,7 +219,29 @@ async function onGeneratePortrait(): Promise<void> {
       </label>
 
       <label class="block text-xs font-medium text-ink-muted">
-        外貌描述
+        标签（逗号分隔）
+        <Input
+          class="mt-1"
+          v-model="tagsText"
+          placeholder="主角, 少年"
+          data-test="tags"
+        />
+      </label>
+
+      <label class="block text-xs font-medium text-ink-muted">
+        简介
+        <Textarea
+          class="mt-1"
+          :model-value="character.bio ?? ''"
+          :rows="2"
+          placeholder="一句话介绍角色，例如：不服输的都市少年"
+          data-test="bio"
+          @update:model-value="setField({ bio: $event })"
+        />
+      </label>
+
+      <label class="block text-xs font-medium text-ink-muted">
+        详细描述
         <Textarea
           class="mt-1"
           :model-value="character.appearance ?? ''"
@@ -258,16 +280,6 @@ async function onGeneratePortrait(): Promise<void> {
           />
         </div>
       </div>
-
-      <label class="block text-xs font-medium text-ink-muted">
-        标签（逗号分隔）
-        <Input
-          class="mt-1"
-          v-model="tagsText"
-          placeholder="主角, 少年"
-          data-test="tags"
-        />
-      </label>
 
       <div class="flex flex-col gap-2">
         <span class="text-xs font-medium text-ink-muted">参考图</span>

@@ -42,8 +42,8 @@ watch(
         @click="emit('select', c.id)"
       >
         <span class="text-sm font-semibold text-ink">{{ c.name }}</span>
-        <p v-if="c.appearance" class="line-clamp-2 text-xs leading-relaxed text-ink-muted">
-          {{ c.appearance }}
+        <p v-if="c.bio || c.appearance" class="line-clamp-2 text-xs leading-relaxed text-ink-muted">
+          {{ c.bio || c.appearance }}
         </p>
         <div v-if="c.referenceImages.length > 0" class="flex gap-1">
           <img

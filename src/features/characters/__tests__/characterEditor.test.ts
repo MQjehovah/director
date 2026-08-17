@@ -89,6 +89,14 @@ describe('character grid', () => {
     expect(w.emitted('add')).toBeTruthy()
   })
 
+  it('prefers bio over appearance in the card summary', () => {
+    const store = useCharacterStore()
+    store.addCharacter({ name: '小红', bio: '温柔的医生', appearance: '长发白衣' })
+    const w = mount(CharacterGrid)
+    expect(w.text()).toContain('温柔的医生')
+    expect(w.text()).not.toContain('长发白衣')
+  })
+
   it('shows empty state when no characters', () => {
     const w = mount(CharacterGrid)
     expect(w.get('[data-test="empty"]').text()).toContain('暂无角色')
@@ -124,12 +132,14 @@ describe('character editor', () => {
     document.body.innerHTML = ''
   })
 
-  it('updates name, appearance and tags', async () => {
+  it('updates name, bio, appearance and tags', async () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
+    await w.get('[data-test="bio"]').setValue('不服输的都市少年')
     await w.get('[data-test="appearance"]').setValue('金发蓝眸少年')
     await w.get('[data-test="tags"]').setValue('主角, 少年')
+    expect(store.getCharacter(c.id)?.bio).toBe('不服输的都市少年')
     expect(store.getCharacter(c.id)?.appearance).toBe('金发蓝眸少年')
     expect(store.getCharacter(c.id)?.tags).toEqual(['主角', '少年'])
   })

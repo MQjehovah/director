@@ -5,6 +5,7 @@ export const ReferenceImageSchema = z.string()
 export const CharacterSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  bio: z.string().optional(),
   appearance: z.string().optional(),
   referenceImages: z.array(ReferenceImageSchema).default([]),
   voice: z.string().optional(),
