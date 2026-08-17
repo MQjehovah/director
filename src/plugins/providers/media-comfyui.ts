@@ -173,7 +173,10 @@ function injectIntoNodes(
   }
 
   if (promptNodeId && graph[promptNodeId]) {
-    graph[promptNodeId].inputs.text = prompt
+    const node = graph[promptNodeId]
+    // 自定义节点（如 MiniMaxH3ImageToVideo）用 prompt 字段，CLIPTextEncode 用 text 字段
+    if (typeof node.inputs.prompt === 'string') node.inputs.prompt = prompt
+    else node.inputs.text = prompt
   } else if (!promptInjected) {
     throw new Error('工作流缺少提示词节点，请重新导入模板或检查模板。')
   }
@@ -182,7 +185,9 @@ function injectIntoNodes(
     graph[ids.negativeNodeId].inputs.text = negativePrompt ?? ''
   }
   if (ids.seedNodeId && graph[ids.seedNodeId]) {
-    graph[ids.seedNodeId].inputs.seed = seed
+    const node = graph[ids.seedNodeId]
+    if (typeof node.inputs.noise_seed === 'number') node.inputs.noise_seed = seed
+    else node.inputs.seed = seed
   }
   return graph
 }

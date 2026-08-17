@@ -75,10 +75,17 @@ function detectNodes(graph: WorkflowGraph): {
         negativeNodeId = (node.inputs.negative as string[])[0]
       }
     }
+    // seed 兜底：RandomNoise 等带 noise_seed 的节点
+    if (seedNodeId === undefined && typeof node.inputs.noise_seed === 'number') {
+      seedNodeId = id
+    }
   }
 
   if (promptNodeId === undefined) {
-    promptNodeId = Object.keys(graph).find((id) => isClipTextEncode(graph[id].class_type))
+    // 优先 CLIPTextEncode；否则找任意带字符串 prompt 输入的节点（MiniMaxH3ImageToVideo 等自定义节点）
+    promptNodeId =
+      Object.keys(graph).find((id) => isClipTextEncode(graph[id].class_type)) ??
+      Object.keys(graph).find((id) => typeof graph[id].inputs.prompt === 'string')
   }
 
   return { promptNodeId, negativeNodeId, seedNodeId }

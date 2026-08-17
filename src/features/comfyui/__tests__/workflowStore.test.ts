@@ -71,6 +71,23 @@ describe('workflowStore', () => {
     expect(result.seedNodeId).toBe('3')
   })
 
+  it('detects custom prompt nodes and RandomNoise seed (MiniMax style)', () => {
+    const result = importWorkflowGraph(
+      JSON.stringify({
+        '134': { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+        '105:15': { class_type: 'RandomNoise', inputs: { noise_seed: 123 } },
+        '105:104': {
+          class_type: 'MiniMaxH3ImageToVideo',
+          inputs: { prompt: '道士说话', first_frame: ['134', 0] },
+        },
+      }),
+      't',
+    )
+    if ('error' in result) throw new Error(result.error)
+    expect(result.promptNodeId).toBe('105:104')
+    expect(result.seedNodeId).toBe('105:15')
+  })
+
   it('returns an error for invalid JSON', () => {
     const result = importWorkflowGraph('{oops', 't')
     expect('error' in result).toBe(true)

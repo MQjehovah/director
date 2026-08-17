@@ -451,4 +451,41 @@ describe('media-comfyui provider', () => {
     expect(body.prompt['1'].inputs.image).toBe('data:image/png;base64,AAAA')
     expect(body.prompt['6'].inputs.text).toBe('动起来')
   })
+
+  it('injects prompt into custom nodes (MiniMax style) and seed into noise_seed', async () => {
+    // 无 CLIPTextEncode/KSampler：提示词在自定义节点 prompt 字段，seed 在 RandomNoise.noise_seed
+    saveWorkflowTemplate({
+      id: 'mm-tpl',
+      name: 'MiniMax 图生视频',
+      graphJson: JSON.stringify({
+        '134': { class_type: 'LoadImage', inputs: { image: '{image}' } },
+        '105:15': { class_type: 'RandomNoise', inputs: { noise_seed: 123 } },
+        '105:104': {
+          class_type: 'MiniMaxH3ImageToVideo',
+          inputs: { prompt: '{prompt}', first_frame: ['134', 0] },
+        },
+      }),
+      promptNodeId: '105:104',
+      seedNodeId: '105:15',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      videoWorkflowTemplateId: 'mm-tpl',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pv4' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    const job = await p.generateVideo({ imageAssetId: 'data:image/png;base64,BBBB', prompt: '道士说话' })
+    expect(job.type).toBe('image2video')
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.prompt['105:104'].inputs.prompt).toBe('道士说话')
+    expect(body.prompt['105:15'].inputs.noise_seed).not.toBe(123)
+    expect(typeof body.prompt['105:15'].inputs.noise_seed).toBe('number')
+    expect(body.prompt['134'].inputs.image).toBe('data:image/png;base64,BBBB')
+  })
 })
