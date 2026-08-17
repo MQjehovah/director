@@ -9,7 +9,7 @@ export interface ProviderCapabilities {
   upscale: boolean
 }
 
-export type ProviderConfigField = 'baseUrl' | 'apiKey' | 'model'
+export type ProviderConfigField = 'baseUrl' | 'apiKey' | 'model' | 'workflow'
 
 export interface PluginBase {
   id: string

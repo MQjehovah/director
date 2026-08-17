@@ -1,6 +1,14 @@
 export { createMediaMockProvider, createMediaMockPlugin } from './media-mock'
 export type { MediaMockOptions, MediaMockProvider } from './media-mock'
 
+export {
+  createMediaComfyUIProvider,
+  createMediaComfyUIPlugin,
+  MEDIA_COMFYUI_ID,
+  DEFAULT_TXT2IMG_WORKFLOW,
+} from './media-comfyui'
+export type { MediaComfyUIOptions, MediaComfyUIProvider } from './media-comfyui'
+
 export { createLLMMockProvider, createLLMMockPlugin } from './llm-mock'
 export type { LLMMockOptions, LLMMockProvider } from './llm-mock'
 

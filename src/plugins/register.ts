@@ -1,6 +1,7 @@
 import { PluginRegistry } from '../core/plugin/registry'
 import {
   createMediaMockPlugin,
+  createMediaComfyUIPlugin,
   createLLMMockPlugin,
   createLLMHttpPlugin,
   createTTSSyncPlugin,
@@ -11,8 +12,9 @@ import { loadProviderConfigs } from '../features/settings/httpBackendConfig'
 export function buildAppPlugins(): PluginRegistry {
   const registry = new PluginRegistry()
   registry.register(createMediaMockPlugin())
+  // 注册在 mock 之后：未手动选择时默认仍使用 mock，配置并选用 ComfyUI 后切换
+  registry.register(createMediaComfyUIPlugin())
   registry.register(createLLMMockPlugin())
-  // 注册在 mock 之后：未手动选择时默认仍使用 mock，配置并选用 HTTP LLM 后切换
   registry.register(createLLMHttpPlugin())
   registry.register(createTTSSyncPlugin())
   registry.register(createStorageIndexedDBPlugin())

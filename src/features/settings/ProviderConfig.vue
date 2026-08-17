@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Badge, Button, Input, Switch } from '../../components/ui'
+import { Badge, Button, Input, Switch, Textarea } from '../../components/ui'
 import { usePluginStore } from '../../stores/pluginStore'
 import type { ProviderConfigField, ProviderPlugin } from '../../core/plugin/types'
 import { loadProviderConfig, saveProviderConfig } from './httpBackendConfig'
@@ -56,11 +56,16 @@ const typeVariant = computed<'neutral' | 'success' | 'warning' | 'danger' | 'inf
 
 const FIELD_META: Record<
   ProviderConfigField,
-  { label: string; placeholder: string; type?: 'text' | 'password' }
+  { label: string; placeholder: string; type?: 'text' | 'password'; multiline?: boolean }
 > = {
-  baseUrl: { label: '地址 Base URL', placeholder: 'http://localhost:8000' },
+  baseUrl: { label: '地址 Base URL', placeholder: 'http://127.0.0.1:8188' },
   apiKey: { label: 'Token / 密钥', placeholder: 'sk-...', type: 'password' },
   model: { label: '模型名', placeholder: 'model-name' },
+  workflow: {
+    label: '工作流模板（API 格式 JSON）',
+    placeholder: '包含 {prompt} / {negative_prompt} / {seed} 占位符的工作流 JSON',
+    multiline: true,
+  },
 }
 
 const fields = computed<ProviderConfigField[]>(() => props.provider.configFields ?? [])
@@ -116,9 +121,24 @@ function setActive(): void {
     </div>
 
     <div v-if="fields.length > 0" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <label v-for="field in fields" :key="field" class="block">
+      <label
+        v-for="field in fields"
+        :key="field"
+        class="block"
+        :class="FIELD_META[field].multiline ? 'sm:col-span-3' : ''"
+      >
         <span class="mb-1 block text-xs text-ink-muted">{{ FIELD_META[field].label }}</span>
+        <Textarea
+          v-if="FIELD_META[field].multiline"
+          :model-value="String(config[field] ?? '')"
+          :rows="8"
+          :placeholder="FIELD_META[field].placeholder"
+          class="font-mono text-xs"
+          :data-test="fieldTestKey(field)"
+          @update:model-value="config[field] = $event"
+        />
         <Input
+          v-else
           :model-value="String(config[field] ?? '')"
           :type="FIELD_META[field].type ?? 'text'"
           :placeholder="FIELD_META[field].placeholder"

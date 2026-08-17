@@ -39,7 +39,8 @@ describe('plugin integration', () => {
     expect(store.isEnabled('media-mock')).toBe(true)
     applySavedProviderConfig(store)
     expect(store.isEnabled('media-mock')).toBe(false)
-    expect(store.mediaProvider).toBeUndefined()
+    // 禁用了 mock 后，media 能力回退到下一个启用的插件（ComfyUI）
+    expect(store.mediaProvider?.id).toBe('media-comfyui')
     expect(store.llmProvider?.id).toBe('llm-mock')
   })
 })
