@@ -411,11 +411,123 @@ describe('media-comfyui provider', () => {
     expect(FakeWebSocket.instances).toHaveLength(1)
   })
 
-  it('text2video throws a clear error when no video workflow template is configured', async () => {
+  it('text2video automatically builds the MiniMax H3 workflow when no template is configured', async () => {
     saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
-    vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ prompt_id: 'pv1' })))
-    const p = providerWithFakeWs()
-    await expect(p.generateVideo({ prompt: '奔跑的猫' })).rejects.toThrow('视频工作流模板')
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pdyn1' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    const job = await p.generateVideo({ prompt: '奔跑的猫', duration: 6 })
+    expect(job.type).toBe('text2video')
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.prompt['105:104'].class_type).toBe('MiniMaxH3ImageToVideo')
+    expect(body.prompt['105:104'].inputs.prompt).toBe('奔跑的猫')
+    expect(body.prompt['105:104'].inputs.first_frame).toBeUndefined()
+    expect(body.prompt['105:111'].inputs.value).toBe(6)
+    expect(typeof body.prompt['105:15'].inputs.noise_seed).toBe('number')
+  })
+
+  it('automatically builds a continuation workflow from the extracted last frame when no template is configured', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pdyn2' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/upload/image')) {
+          return Promise.resolve(jsonResponse({ name: 'frame.png' }))
+        }
+        if (String(url).endsWith('/prompt')) return promptCall(url, init)
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const frameExtractor = vi.fn().mockResolvedValue(
+      new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10, frameExtractor })
+    const job = await p.generateVideo({
+      prompt: '继续往前走',
+      prevVideoAssetId: 'http://127.0.0.1:8188/view?filename=prev.mp4&type=output',
+    })
+    expect(frameExtractor).toHaveBeenCalledTimes(1)
+    expect(job.type).toBe('videoContinue')
+    const g = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string).prompt
+    expect(g['ai-director-image'].class_type).toBe('LoadImage')
+    expect(g['ai-director-image'].inputs.image).toBe('frame.png')
+    expect(g['105:104'].inputs.first_frame).toEqual(['ai-director-image', 0])
+  })
+
+  it('uses the continuation template with the extracted last frame when configured', async () => {
+    saveWorkflowTemplate({
+      id: 'cont-frame',
+      name: '续写模板',
+      graphJson: JSON.stringify({
+        '1': {
+          class_type: 'MiniMaxH3ImageToVideo',
+          inputs: { prompt: '{prompt}', first_frame: '{image_link}' },
+        },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      continuationVideoWorkflowTemplateId: 'cont-frame',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pcf' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/upload/image')) {
+          return Promise.resolve(jsonResponse({ name: 'frame.png' }))
+        }
+        if (String(url).endsWith('/prompt')) return promptCall(url, init)
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const p = createMediaComfyUIProvider({
+      pollIntervalMs: 10,
+      frameExtractor: async () => new Blob([new Uint8Array([1])], { type: 'image/png' }),
+    })
+    const job = await p.generateVideo({
+      prompt: '继续',
+      prevVideoAssetId: 'http://127.0.0.1:8188/view?filename=prev.mp4&type=output',
+    })
+    expect(job.type).toBe('videoContinue')
+    const g = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string).prompt
+    expect(g['ai-director-image'].class_type).toBe('LoadImage')
+    expect(g['1'].inputs.first_frame).toEqual(['ai-director-image', 0])
+  })
+
+  it('automatically builds a video workflow with a LoadImage first frame when no template is configured', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pdyn3' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/upload/image')) {
+          return Promise.resolve(jsonResponse({ name: 'frame.png' }))
+        }
+        if (String(url).endsWith('/prompt')) return promptCall(url, init)
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          blob: async () => new Blob([new Uint8Array([1])], { type: 'image/png' }),
+        } as unknown as Response)
+      }),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    const job = await p.generateVideo({
+      imageAssetId: 'data:image/png;base64,AAAA',
+      prompt: '动起来',
+    })
+    expect(job.type).toBe('image2video')
+    const g = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string).prompt
+    expect(g['ai-director-image'].class_type).toBe('LoadImage')
+    expect(g['ai-director-image'].inputs.image).toBe('frame.png')
+    expect(g['105:104'].inputs.first_frame).toEqual(['ai-director-image', 0])
   })
 
   it('text2video submits the video workflow template', async () => {
@@ -774,40 +886,6 @@ describe('media-comfyui provider', () => {
     expect(done.result?.assetIds).toHaveLength(1)
   })
 
-  it('videoContinue injects the previous video filename into the continuation template', async () => {
-    saveWorkflowTemplate({
-      id: 'cont-tpl',
-      name: '视频续写',
-      graphJson: JSON.stringify({
-        '1': { class_type: 'LoadVideo', inputs: { video: '{prev_video}' } },
-        '5': { class_type: 'KSampler', inputs: { seed: '{seed}' } },
-        '6': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
-      }),
-      promptNodeId: '6',
-      seedNodeId: '5',
-    })
-    saveProviderConfig(MEDIA_COMFYUI_ID, {
-      baseUrl: 'http://127.0.0.1:8188',
-      continuationVideoWorkflowTemplateId: 'cont-tpl',
-    })
-    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pc1' }))
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string, init?: RequestInit) =>
-        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
-      ),
-    )
-    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
-    const job = await p.generateVideo({
-      prompt: '继续往前走',
-      prevVideoAssetId: 'http://127.0.0.1:8188/view?filename=prev.mp4&type=output',
-    })
-    expect(job.type).toBe('videoContinue')
-    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
-    expect(body.prompt['1'].inputs.video).toBe('prev.mp4')
-    expect(body.prompt['6'].inputs.text).toBe('继续往前走')
-  })
-
   it('dynamically inserts a LoadImage node when a first-frame image exists', async () => {
     saveWorkflowTemplate({
       id: 'dyn-img',
@@ -878,71 +956,4 @@ describe('media-comfyui provider', () => {
     expect(body.prompt['ai-director-image']).toBeUndefined()
   })
 
-  it('dynamically inserts a LoadVideo node when a previous video exists', async () => {
-    saveWorkflowTemplate({
-      id: 'dyn-vid',
-      name: '动态续写',
-      graphJson: JSON.stringify({
-        '1': {
-          class_type: 'MiniMaxH3MotionContext',
-          inputs: { video: '{prev_video_link}', frames: 22 },
-        },
-        '6': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
-      }),
-      promptNodeId: '6',
-    })
-    saveProviderConfig(MEDIA_COMFYUI_ID, {
-      baseUrl: 'http://127.0.0.1:8188',
-      continuationVideoWorkflowTemplateId: 'dyn-vid',
-    })
-    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pd4' }))
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string, init?: RequestInit) =>
-        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
-      ),
-    )
-    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
-    const job = await p.generateVideo({
-      prompt: 'x',
-      prevVideoAssetId: 'http://127.0.0.1:8188/view?filename=prev.mp4&type=output',
-    })
-    expect(job.type).toBe('videoContinue')
-    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
-    expect(body.prompt['ai-director-video'].class_type).toBe('VHS_LoadVideo')
-    expect(body.prompt['ai-director-video'].inputs.video).toBe('prev.mp4')
-    expect(body.prompt['1'].inputs.video).toEqual(['ai-director-video', 0])
-    expect(body.prompt['1'].inputs.frames).toBe(22)
-  })
-
-  it('removes the previous-video link when no previous video exists', async () => {
-    saveWorkflowTemplate({
-      id: 'dyn-vid-empty',
-      name: '动态续写空',
-      graphJson: JSON.stringify({
-        '1': {
-          class_type: 'MiniMaxH3MotionContext',
-          inputs: { video: '{prev_video_link}', frames: 22 },
-        },
-        '6': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
-      }),
-      promptNodeId: '6',
-    })
-    saveProviderConfig(MEDIA_COMFYUI_ID, {
-      baseUrl: 'http://127.0.0.1:8188',
-      videoWorkflowTemplateId: 'dyn-vid-empty',
-    })
-    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pd5' }))
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string, init?: RequestInit) =>
-        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
-      ),
-    )
-    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
-    await p.generateVideo({ prompt: 'x' })
-    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
-    expect(body.prompt['1'].inputs.video).toBeUndefined()
-    expect(body.prompt['ai-director-video']).toBeUndefined()
-  })
 })

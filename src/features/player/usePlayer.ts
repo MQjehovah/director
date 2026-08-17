@@ -1,10 +1,12 @@
 import { computed, getCurrentScope, onScopeDispose, ref, toValue, watch } from 'vue'
 import type { MaybeRefOrGetter } from 'vue'
 import type { Shot } from '../../core/models'
-import { buildSubtitleTrack, shotDuration } from './subtitles'
+import { shotDuration } from './subtitles'
 import type { DialogueResolver, SubtitleEntry } from './subtitles'
 
 export const PLAYER_TICK_MS = 100
+/** 视频镜头加载宽限期：进入镜头后等待真实时长上报，避免加载慢导致镜头被计时器跳过 */
+export const VIDEO_LOAD_GRACE_MS = 5000
 
 export interface UsePlayerOptions {
   getDialogue?: DialogueResolver
@@ -14,13 +16,14 @@ export interface UsePlayerOptions {
 export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlayerOptions = {}) {
   const tickMs = options.tickMs ?? PLAYER_TICK_MS
   const shots = computed<Shot[]>(() => toValue(shotsInput))
-  const track = computed<SubtitleEntry[]>(() => buildSubtitleTrack(shots.value, options.getDialogue))
 
   const currentIndex = ref(0)
   const playing = ref(false)
   const currentTime = ref(0)
   // 视频镜头的真实时长（由 loadedmetadata/durationchange 上报），用于驱动进度与切镜
   const videoDurations = ref<Record<string, number>>({})
+  // 进入各镜头的时刻，用于视频加载宽限期判断
+  const videoLoadStart = ref<Record<string, number>>({})
 
   let timer: ReturnType<typeof setInterval> | undefined
   let lastTickAt = 0
@@ -33,6 +36,27 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
     if (!shot) return 0
     return videoDurations.value[shot.id] ?? shotDuration(shot)
   }
+
+  function resolveDialogue(shot: Shot): string | undefined {
+    return options.getDialogue?.(shot) ?? (shot as { dialogue?: string }).dialogue
+  }
+
+  // 字幕轨道按真实时长排列（视频用实际长度，其余用设计时长）
+  const track = computed<SubtitleEntry[]>(() => {
+    let start = 0
+    return shots.value.map((shot) => {
+      const duration = effectiveDuration(shot)
+      const entry: SubtitleEntry = {
+        shotId: shot.id,
+        text: resolveDialogue(shot) ?? '',
+        start,
+        end: start + duration,
+        duration,
+      }
+      start += duration
+      return entry
+    })
+  })
 
   /** 视频镜头在真实时长上报后由视频事件驱动（timeupdate/ended），计时器不再累加 */
   function isVideoDriven(shot: Shot | undefined): boolean {
@@ -70,6 +94,17 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
     }
   }
 
+  watch(
+    currentIndex,
+    () => {
+      const shot = currentShot.value
+      if (shot) {
+        videoLoadStart.value = { ...videoLoadStart.value, [shot.id]: Date.now() }
+      }
+    },
+    { immediate: true },
+  )
+
   function tick(): void {
     if (!playing.value) return
     const shot = currentShot.value
@@ -82,6 +117,11 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
     const delta = lastTickAt === 0 ? tickMs / 1000 : (now - lastTickAt) / 1000
     lastTickAt = now
     if (isVideoDriven(shot)) return
+    if (shot.shotType === 'video') {
+      // 视频尚未上报真实时长：先等加载（宽限期），避免把正在加载的镜头跳过
+      const started = videoLoadStart.value[shot.id] ?? Date.now()
+      if (Date.now() - started < VIDEO_LOAD_GRACE_MS) return
+    }
     const duration = effectiveDuration(shot)
     currentTime.value += delta
     if (currentTime.value < duration) return
@@ -144,21 +184,20 @@ export function usePlayer(shotsInput: MaybeRefOrGetter<Shot[]>, options: UsePlay
     }
   }
 
-  /** 视频上报真实时长；仅接受当前镜头上报，避免切镜后旧事件写入 */
+  /** 视频真实时长：允许预测量/后台镜头注册，播放时按实际长度驱动 */
   function setVideoDuration(shotId: string, duration: number): void {
-    if (shotId !== currentShot.value?.id) return
-    if (!Number.isFinite(duration) || duration <= 0) return
+    // 忽略异常小的元数据时长（某些 MP4 的 duration 在加载初期会误报为 0.x 秒）
+    if (!Number.isFinite(duration) || duration < 1) return
     videoDurations.value = { ...videoDurations.value, [shotId]: duration }
   }
 
-  /** 视频 timeupdate：同步镜头内时间；播放中播到结尾则切镜 */
+  /** 视频 timeupdate：只同步镜头内时间；切镜只由真实的 ended 事件触发 */
   function setVideoTime(shotId: string, time: number): void {
     const shot = currentShot.value
     if (shotId !== shot?.id || !isVideoDriven(shot)) return
     const duration = effectiveDuration(shot)
     const t = Math.max(0, Math.min(time, duration))
     currentTime.value = t
-    if (playing.value && t >= duration - 0.05) advance(0)
   }
 
   /** 视频 ended：镜头结束 */

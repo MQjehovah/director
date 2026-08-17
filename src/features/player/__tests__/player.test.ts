@@ -8,11 +8,10 @@ import {
   beatDialogueForShot,
   buildAudioTrack,
 } from '../subtitles'
-import { usePlayer } from '../usePlayer'
+import { usePlayer, VIDEO_LOAD_GRACE_MS } from '../usePlayer'
 import ShotPlayer from '../ShotPlayer.vue'
 import PlayerPanel from '../PlayerPanel.vue'
 import { useStoryboardStore } from '../../../stores/storyboardStore'
-import { useScriptStore } from '../../../stores/scriptStore'
 import { ScriptSchema } from '../../../core/models'
 import type { Shot } from '../../../core/models'
 
@@ -155,6 +154,16 @@ describe('usePlayer', () => {
     expect(player.currentTime.value).toBe(10)
   })
 
+  it('accepts video durations for shots that are not currently playing', () => {
+    const store = useStoryboardStore()
+    store.addShot({ shotType: 'image', camera: makeCamera(3) })
+    const videoShot = store.addShot({ shotType: 'video', camera: makeCamera(5) })
+    const player = usePlayer(store.shots)
+    player.setVideoDuration(videoShot.id, 10)
+    expect(player.total.value).toBe(13)
+    expect(player.durationOf(videoShot)).toBe(10)
+  })
+
   it('advances to the next shot when the current video ends', () => {
     const store = useStoryboardStore()
     const shot1 = store.addShot({ shotType: 'video', camera: makeCamera(5) })
@@ -167,7 +176,7 @@ describe('usePlayer', () => {
     expect(player.currentTime.value).toBe(0)
   })
 
-  it('advances when a playing video reaches its duration via timeupdate', () => {
+  it('advances only when the video actually ends', () => {
     const store = useStoryboardStore()
     const shot1 = store.addShot({ shotType: 'video', camera: makeCamera(5) })
     store.addShot({ shotType: 'image', camera: makeCamera(2) })
@@ -177,7 +186,55 @@ describe('usePlayer', () => {
     player.setVideoTime(shot1.id, 3.9)
     expect(player.currentIndex.value).toBe(0)
     player.setVideoTime(shot1.id, 4)
+    expect(player.currentIndex.value).toBe(0)
+    player.videoEnded(shot1.id)
     expect(player.currentIndex.value).toBe(1)
+  })
+
+  it('does not skip a video shot when metadata reports a bogus tiny duration', () => {
+    const store = useStoryboardStore()
+    store.addShot({ shotType: 'image', camera: makeCamera(1) })
+    const videoShot = store.addShot({ shotType: 'video', camera: makeCamera(5) })
+    store.addShot({ shotType: 'image', camera: makeCamera(1) })
+    const player = usePlayer(store.shots)
+    player.seek(1)
+    // 预测量上报异常小时长：应被忽略，仍按设计时长兜底
+    player.setVideoDuration(videoShot.id, 0.04)
+    expect(player.durationOf(videoShot)).toBe(5)
+    player.play()
+    player.setVideoTime(videoShot.id, 0.04)
+    expect(player.currentIndex.value).toBe(1)
+    player.videoEnded(videoShot.id)
+    expect(player.currentIndex.value).toBe(2)
+  })
+
+  it('waits for a video to load before the timer can skip it', async () => {
+    const store = useStoryboardStore()
+    store.addShot({ shotType: 'image', camera: makeCamera(1) })
+    const videoShot = store.addShot({ shotType: 'video', camera: makeCamera(3) })
+    store.addShot({ shotType: 'image', camera: makeCamera(1) })
+    const player = usePlayer(store.shots)
+    player.seek(1)
+    player.play()
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(player.currentIndex.value).toBe(1)
+    player.setVideoDuration(videoShot.id, 4)
+    player.setVideoTime(videoShot.id, 3.9)
+    expect(player.currentIndex.value).toBe(1)
+    player.videoEnded(videoShot.id)
+    expect(player.currentIndex.value).toBe(2)
+  })
+
+  it('falls back to the configured duration after the video load grace period', async () => {
+    const store = useStoryboardStore()
+    store.addShot({ shotType: 'image', camera: makeCamera(1) })
+    store.addShot({ shotType: 'video', camera: makeCamera(3) })
+    store.addShot({ shotType: 'image', camera: makeCamera(1) })
+    const player = usePlayer(store.shots)
+    player.seek(1)
+    player.play()
+    await vi.advanceTimersByTimeAsync(VIDEO_LOAD_GRACE_MS + 3100)
+    expect(player.currentIndex.value).toBe(2)
   })
 
   it('ignores video events from a shot that is no longer current', () => {
@@ -197,17 +254,16 @@ describe('shot player', () => {
     setActivePinia(createPinia())
   })
 
-  it('renders the image with a Ken Burns transform and subtitle overlay', async () => {
+  it('renders the image with a Ken Burns transform', async () => {
     const store = useStoryboardStore()
     const shot = store.addShot({
       shotType: 'image',
       camera: { shotSize: 'wide', angle: 'eye-level', move: 'zoom-in', duration: 4 },
       mediaAssets: ['data:image/svg+xml;utf8,FAKE'],
     })
-    const w = mount(ShotPlayer, { props: { shot, subtitle: '你好', playing: true } })
+    const w = mount(ShotPlayer, { props: { shot, playing: true } })
     await flushPromises()
     expect(w.get('[data-test="shot-image"]').attributes('style')).toContain('scale(1.35)')
-    expect(w.get('[data-test="subtitle"]').text()).toBe('你好')
   })
 
   it('renders a video element for a video shot with a real video url', async () => {
@@ -226,6 +282,22 @@ describe('shot player', () => {
     expect(w.get('[data-test="shot-video"]').classes()).toContain('object-contain')
   })
 
+  it('remounts the video element when the shot asset is regenerated', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({
+      shotType: 'video',
+      mediaAssets: ['https://example.com/old.mp4'],
+    })
+    const w = mount(ShotPlayer, { props: { shot } })
+    await flushPromises()
+    const first = w.get('[data-test="shot-video"]').element
+    await w.setProps({ shot: { ...shot, mediaAssets: ['https://example.com/new.mp4'] } })
+    await flushPromises()
+    const second = w.get('[data-test="shot-video"]').element
+    expect(second).not.toBe(first)
+    expect(second.getAttribute('src')).toContain('new.mp4')
+  })
+
   it('emits video-ended with the shot id when the video ends', async () => {
     const store = useStoryboardStore()
     const shot = store.addShot({ shotType: 'video', mediaAssets: ['https://example.com/clip.mp4'] })
@@ -233,6 +305,47 @@ describe('shot player', () => {
     await flushPromises()
     await w.get('[data-test="shot-video"]').trigger('ended')
     expect(w.emitted('video-ended')?.[0]).toEqual([shot.id])
+  })
+
+  it('does not sync a pause that happens before playback started', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video', mediaAssets: ['https://example.com/clip.mp4'] })
+    const w = mount(ShotPlayer, { props: { shot } })
+    await flushPromises()
+    // 加载初始化阶段的 pause 不应同步成片状态
+    await w.get('[data-test="shot-video"]').trigger('pause')
+    expect(w.emitted('video-pause')).toBeUndefined()
+    await w.get('[data-test="shot-video"]').trigger('play')
+    await w.get('[data-test="shot-video"]').trigger('pause')
+    expect(w.emitted('video-pause')?.[0]).toEqual([shot.id])
+  })
+
+  it('resets the started flag when switching to a new shot', async () => {
+    const store = useStoryboardStore()
+    const shot1 = store.addShot({ shotType: 'video', mediaAssets: ['https://example.com/a.mp4'] })
+    const shot2 = store.addShot({ shotType: 'video', mediaAssets: ['https://example.com/b.mp4'] })
+    const w = mount(ShotPlayer, { props: { shot: shot1 } })
+    await flushPromises()
+    await w.get('[data-test="shot-video"]').trigger('play')
+    await w.get('[data-test="shot-video"]').trigger('pause')
+    expect(w.emitted('video-pause')).toHaveLength(1)
+    // 切到下一镜头：新元素加载期的 pause 不应再同步成片
+    await w.setProps({ shot: shot2 })
+    await flushPromises()
+    await w.get('[data-test="shot-video"]').trigger('pause')
+    expect(w.emitted('video-pause')).toHaveLength(1)
+  })
+
+  it('ignores a pause at the end of the video (natural end quirk)', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video', mediaAssets: ['https://example.com/clip.mp4'] })
+    const w = mount(ShotPlayer, { props: { shot } })
+    await flushPromises()
+    await w.get('[data-test="shot-video"]').trigger('play')
+    const video = w.get('[data-test="shot-video"]').element as HTMLVideoElement
+    Object.defineProperty(video, 'ended', { value: true, configurable: true })
+    await w.get('[data-test="shot-video"]').trigger('pause')
+    expect(w.emitted('video-pause')).toBeUndefined()
   })
 
   it('renders the generated video for an image2video shot instead of the input image', async () => {
@@ -306,27 +419,4 @@ describe('player panel', () => {
     expect(w.get('[data-test="player-position"]').text()).toBe('2 / 2')
   })
 
-  it('shows dialogue subtitles resolved from the script beat', () => {
-    const store = useStoryboardStore()
-    const scriptStore = useScriptStore()
-    const scene = scriptStore.addScene({ title: '第一场' })
-    const beat = scriptStore.addBeat(scene.id, {
-      type: 'dialogue',
-      dialogue: { speaker: '小明', text: '你好' },
-    })
-    store.addShot({ shotType: 'image', beatRef: beat.id, camera: makeCamera(3) })
-    const w = mount(PlayerPanel)
-    expect(w.get('[data-test="player-subtitle"]').text()).toBe('小明：你好')
-  })
-
-  it('shows dialogue stored on the shot metadata (LLM split shots)', () => {
-    const store = useStoryboardStore()
-    store.addShot({
-      shotType: 'video',
-      camera: makeCamera(4),
-      metadata: { dialogue: '小明：你好\n小红：再见' },
-    })
-    const w = mount(PlayerPanel)
-    expect(w.get('[data-test="player-subtitle"]').text()).toBe('小明：你好\n小红：再见')
-  })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { displayAssetOf, useShotActions } from '../storyboard/useShotActions'
 import { shotDuration } from './subtitles'
 import type { Shot } from '../../core/models'
@@ -7,11 +7,9 @@ import type { Shot } from '../../core/models'
 const props = withDefaults(
   defineProps<{
     shot: Shot
-    subtitle?: string
     playing?: boolean
   }>(),
   {
-    subtitle: '',
     playing: false,
   },
 )
@@ -72,6 +70,50 @@ const kenBurnsStyle = computed(() => ({
 }))
 
 const videoRef = ref<HTMLVideoElement | null>(null)
+let resumeTimer: ReturnType<typeof setInterval> | undefined
+let hasStarted = false
+
+// 视频元素按资产重建：切镜/重生成后重置“已开始播放”标志，
+// 避免上一段的状态泄漏导致新镜头加载期的 pause 被误同步。
+watch(
+  () => assetId.value,
+  () => {
+    hasStarted = false
+  },
+  { immediate: true },
+)
+
+// 播放自愈：成片处于播放态时，若视频已加载却被暂停（起播竞态/误停），自动恢复播放
+watch(
+  () => props.playing,
+  (playing) => {
+    if (playing && resumeTimer === undefined) {
+      resumeTimer = setInterval(() => {
+        const video = videoRef.value
+        if (!video || !props.playing) return
+        if (video.paused && !video.ended && video.readyState >= 2) {
+          try {
+            const result = video.play()
+            if (result && typeof result.catch === 'function') result.catch(() => {})
+          } catch {
+            // 环境不支持时忽略
+          }
+        }
+      }, 300)
+    } else if (!playing && resumeTimer !== undefined) {
+      clearInterval(resumeTimer)
+      resumeTimer = undefined
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (resumeTimer !== undefined) {
+    clearInterval(resumeTimer)
+    resumeTimer = undefined
+  }
+})
 
 // 用指令式 play/pause 与成片播放状态同步：autoplay 属性在运行中切换并不可靠，
 // 且只靠它无法在暂停时真正暂停视频。
@@ -98,7 +140,18 @@ function reportDuration(): void {
   const video = videoRef.value
   if (!video) return
   const d = video.duration
-  if (Number.isFinite(d) && d > 0) emit('video-duration', props.shot.id, d)
+  if (Number.isFinite(d) && d > 0) {
+    emit('video-duration', props.shot.id, d)
+    // 切镜/重生成后元素刚挂载、src 未就绪时 play() 会被拒绝；元数据就绪后补一次播放
+    if (props.playing) {
+      try {
+        const result = video.play()
+        if (result && typeof result.catch === 'function') result.catch(() => {})
+      } catch {
+        // 环境不支持时忽略
+      }
+    }
+  }
 }
 
 function onTimeUpdate(): void {
@@ -106,14 +159,46 @@ function onTimeUpdate(): void {
   if (!video) return
   emit('video-time', props.shot.id, video.currentTime)
 }
+
+function onCanPlay(): void {
+  // 数据足够开始播放时就起播，不必等整段加载完
+  if (!props.playing) return
+  try {
+    const result = videoRef.value?.play()
+    if (result && typeof result.catch === 'function') result.catch(() => {})
+  } catch {
+    // 环境不支持时忽略
+  }
+}
+
+function onPlay(): void {
+  hasStarted = true
+  emit('video-play', props.shot.id)
+}
+
+function onPause(): void {
+  // 加载/初始化阶段浏览器可能误发 pause 事件：只有真正开始播放过后才同步成片状态，
+  // 避免第三段刚加载就被误判为“用户暂停”而把连播停掉。
+  if (!hasStarted) return
+  const video = videoRef.value
+  // 自然播到结尾时浏览器会在 ended 前后触发 pause：不算用户暂停，不能拉停成片
+  if (video) {
+    if (video.ended) return
+    if (video.duration > 0 && video.currentTime >= video.duration - 0.15) return
+  }
+  emit('video-pause', props.shot.id)
+}
 </script>
 
 <template>
-  <div class="relative aspect-video w-full overflow-hidden bg-zinc-950" data-test="shot-player">
+  <div
+    class="relative aspect-video max-h-full w-full overflow-hidden bg-zinc-950"
+    data-test="shot-player"
+  >
     <template v-if="displayAsImage">
       <img
         v-if="resolvedUrl"
-        :key="shot.id"
+        :key="assetId"
         :src="resolvedUrl"
         :style="kenBurnsStyle"
         class="ken-burns h-full w-full object-cover"
@@ -131,27 +216,23 @@ function onTimeUpdate(): void {
     <video
       v-else
       ref="videoRef"
-      :key="shot.id"
+      :key="assetId"
       :src="resolvedUrl"
       controls
       muted
       playsinline
+      preload="auto"
       class="h-full w-full object-contain"
       data-test="shot-video"
       @loadedmetadata="reportDuration"
       @durationchange="reportDuration"
       @timeupdate="onTimeUpdate"
+      @canplay="onCanPlay"
+      @loadeddata="onCanPlay"
       @ended="emit('video-ended', shot.id)"
-      @play="emit('video-play', shot.id)"
-      @pause="emit('video-pause', shot.id)"
+      @play="onPlay"
+      @pause="onPause"
     />
-    <span
-      v-if="subtitle"
-      class="absolute inset-x-0 bottom-0 bg-zinc-950/70 px-3 py-2 text-center text-sm text-zinc-50"
-      data-test="subtitle"
-    >
-      {{ subtitle }}
-    </span>
   </div>
 </template>
 

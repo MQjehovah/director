@@ -69,6 +69,19 @@ const ANGLE_LABELS: Record<string, string> = {
   dutch: '倾斜',
 }
 
+/** 向前找最近一段已生成视频的资产 id，用于视频续写（参照上一段结尾继续生成） */
+export function findPreviousVideoAssetId(shots: Shot[], shotId: string): string | undefined {
+  const index = shots.findIndex((s) => s.id === shotId)
+  if (index <= 0) return undefined
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const prev = shots[i]
+    if (prev.shotType !== 'video') continue
+    const last = prev.mediaAssets[prev.mediaAssets.length - 1]
+    if (last) return last
+  }
+  return undefined
+}
+
 const MOVE_LABELS: Record<string, string> = {
   static: '固定机位',
   pan: '横摇',
@@ -111,17 +124,8 @@ export function useShotActions() {
     return active ?? jobs[jobs.length - 1]
   }
 
-  /** 向前找最近一段已生成视频的资产 id，用于视频续写（参照上一段结尾继续生成） */
   function previousVideoAssetId(shotId: string): string | undefined {
-    const index = storyboardStore.shots.findIndex((s) => s.id === shotId)
-    if (index <= 0) return undefined
-    for (let i = index - 1; i >= 0; i -= 1) {
-      const prev = storyboardStore.shots[i]
-      if (prev.shotType !== 'video') continue
-      const last = prev.mediaAssets[prev.mediaAssets.length - 1]
-      if (last) return last
-    }
-    return undefined
+    return findPreviousVideoAssetId(storyboardStore.shots, shotId)
   }
 
   async function generateMedia(shotId: string): Promise<Job | undefined> {
@@ -142,7 +146,8 @@ export function useShotActions() {
     try {
       if (shot.shotType === 'video') {
         const imageAssetId = imageInputFor(shot)
-        const prevVideoAssetId = previousVideoAssetId(shotId)
+        const continueFromPrev = shot.metadata?.continueFromPrev === true
+        const prevVideoAssetId = continueFromPrev ? previousVideoAssetId(shotId) : undefined
         providerJob = imageAssetId
           ? await media.generateVideo({
               imageAssetId,

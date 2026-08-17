@@ -1,22 +1,81 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
-import { useScriptStore } from '../../stores/scriptStore'
 import { Button, Progress } from '../../components/ui'
 import { usePlayer } from './usePlayer'
-import { beatDialogueForShot } from './subtitles'
 import ShotPlayer from './ShotPlayer.vue'
+import { displayAssetOf, useShotActions } from '../storyboard/useShotActions'
 import type { Shot } from '../../core/models'
 
 const store = useStoryboardStore()
-const scriptStore = useScriptStore()
 
-function getDialogue(shot: Shot): string | undefined {
-  const stored = shot.metadata?.dialogue
-  if (typeof stored === 'string' && stored.trim().length > 0) return stored
-  return (shot as { dialogue?: string }).dialogue ?? beatDialogueForShot(scriptStore.script, shot)
+const player = usePlayer(store.shots)
+const actions = useShotActions()
+const measuredAssets = new Set<string>()
+const warmingUrls = new Set<string>()
+
+/** 读取视频真实时长（浏览器元数据），用于按实际长度排列时间线/总时长/字幕 */
+function measureVideoDuration(url: string): Promise<number> {
+  return new Promise<number>((resolve) => {
+    const video = document.createElement('video')
+    video.muted = true
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => {
+      const d = video.duration
+      resolve(Number.isFinite(d) && d > 0 ? d : 0)
+    }
+    video.onerror = () => resolve(0)
+    video.src = url
+  })
 }
 
-const player = usePlayer(store.shots, { getDialogue })
+/** 预热后续视频元数据：切镜时新元素能立刻拿到时长并快速起播 */
+function warmVideoMetadata(url: string): Promise<void> {
+  if (warmingUrls.has(url)) return Promise.resolve()
+  warmingUrls.add(url)
+  return new Promise<void>((resolve) => {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.muted = true
+    video.onloadedmetadata = () => resolve()
+    video.onerror = () => resolve()
+    video.src = url
+  }).finally(() => {
+    warmingUrls.delete(url)
+  })
+}
+
+watch(
+  () => player.currentIndex.value,
+  () => {
+    // 预热当前镜头之后的 1~2 段视频，减少切镜停顿
+    for (let i = 1; i <= 2; i += 1) {
+      const next = store.shots[player.currentIndex.value + i]
+      if (!next || next.shotType !== 'video') continue
+      const asset = displayAssetOf(next)
+      if (!asset) continue
+      void actions.resolveAssetUrl(asset).then((url) => {
+        if (url) void warmVideoMetadata(url)
+      })
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => store.shots.map((s) => ({ id: s.id, type: s.shotType, asset: displayAssetOf(s) })),
+  async (list) => {
+    for (const item of list) {
+      if (item.type !== 'video' || !item.asset || measuredAssets.has(item.asset)) continue
+      measuredAssets.add(item.asset)
+      const url = await actions.resolveAssetUrl(item.asset)
+      if (!url) continue
+      const duration = await measureVideoDuration(url)
+      if (duration > 0) player.setVideoDuration(item.id, duration)
+    }
+  },
+  { immediate: true },
+)
 
 function widthPct(shot: Shot): number {
   const denom = player.total.value
@@ -41,11 +100,13 @@ function widthPct(shot: Shot): number {
         </div>
       </div>
 
-      <div class="overflow-hidden rounded-lg border border-edge bg-zinc-950" data-test="player-shot">
+      <div
+        class="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg border border-edge bg-zinc-950"
+        data-test="player-shot"
+      >
         <ShotPlayer
           v-if="player.currentShot.value"
           :shot="player.currentShot.value"
-          :subtitle="player.currentSubtitle.value?.text"
           :playing="player.playing.value"
           @video-duration="player.setVideoDuration"
           @video-time="player.setVideoTime"
@@ -94,14 +155,6 @@ function widthPct(shot: Shot): number {
       </div>
 
       <Progress :value="player.progress.value * 100" data-test="player-progress" />
-
-      <p
-        v-if="player.currentSubtitle.value?.text"
-        class="text-center text-sm text-ink"
-        data-test="player-subtitle"
-      >
-        {{ player.currentSubtitle.value.text }}
-      </p>
 
       <div class="flex w-full items-stretch gap-1 overflow-x-auto" data-test="player-timeline">
         <button

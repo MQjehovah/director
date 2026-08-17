@@ -20,6 +20,8 @@ export type WsCtor = typeof WebSocket
 export interface MediaComfyUIOptions {
   pollIntervalMs?: number
   wsCtor?: WsCtor
+  /** 续写用：从上一段视频 URL 抽取最后一帧（默认浏览器 canvas 实现，测试可注入） */
+  frameExtractor?: (inputUrl: string) => Promise<Blob>
 }
 
 /** 默认文生图工作流模板（ComfyUI API 格式），支持 {prompt}/{negative_prompt}/{seed} 占位符 */
@@ -62,6 +64,114 @@ export const DEFAULT_TXT2IMG_WORKFLOW = JSON.stringify({
   '9': {
     class_type: 'SaveImage',
     inputs: { filename_prefix: 'ai-director', images: ['8', 0] },
+  },
+})
+
+/**
+ * 内置 MiniMax H3 视频工作流（来自导演台常用模板）：
+ * 提示词/seed/时长用占位符，first_frame 由动态搭建逻辑按需接线（续写链路或首帧图）。
+ */
+export const DEFAULT_MINIMAX_H3_WORKFLOW = JSON.stringify({
+  '92': {
+    class_type: 'SaveVideo',
+    inputs: {
+      filename_prefix: 'video/MiniMax_H3',
+      format: 'auto',
+      codec: 'auto',
+      video: ['105:91', 0],
+    },
+  },
+  '115': {
+    class_type: 'ResolutionSelector',
+    inputs: { aspect_ratio: '16:9 (Widescreen)', megapixels: 0.2, multiple: 32 },
+  },
+  '105:11': {
+    class_type: 'VAELoader',
+    inputs: { vae_name: 'minimax_h3_video_vae_fp16.safetensors' },
+  },
+  '105:24': {
+    class_type: 'VAELoader',
+    inputs: { vae_name: 'minimax_h3_audio_vae_fp32.safetensors' },
+  },
+  '105:23': {
+    class_type: 'VAEDecodeAudio',
+    inputs: { samples: ['105:14', 0], vae: ['105:24', 0] },
+  },
+  '105:10': {
+    class_type: 'VAEDecode',
+    inputs: { samples: ['105:14', 0], vae: ['105:11', 0] },
+  },
+  '105:17': {
+    class_type: 'KSamplerSelect',
+    inputs: { sampler_name: 'res_multistep' },
+  },
+  '105:9': {
+    class_type: 'BasicScheduler',
+    inputs: { scheduler: 'simple', steps: 20, denoise: 1, model: ['105:121', 0] },
+  },
+  '105:14': {
+    class_type: 'SamplerCustomAdvanced',
+    inputs: {
+      noise: ['105:15', 0],
+      guider: ['105:16', 0],
+      sampler: ['105:17', 0],
+      sigmas: ['105:9', 0],
+      latent_image: ['105:104', 1],
+    },
+  },
+  '105:16': {
+    class_type: 'BasicGuider',
+    inputs: { model: ['105:121', 0], conditioning: ['105:104', 0] },
+  },
+  '105:6': {
+    class_type: 'UNETLoader',
+    inputs: { unet_name: 'minimax_h3_fl2va_pruned_nvfp4.safetensors', weight_dtype: 'default' },
+  },
+  '105:13': {
+    class_type: 'CLIPLoader',
+    inputs: {
+      clip_name: 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors',
+      type: 'minimax',
+      device: 'default',
+    },
+  },
+  '105:15': {
+    class_type: 'RandomNoise',
+    inputs: { noise_seed: '{seed}' },
+  },
+  '105:91': {
+    class_type: 'CreateVideo',
+    inputs: { fps: 24, bit_depth: 8, images: ['105:10', 0], audio: ['105:23', 0] },
+  },
+  '105:104': {
+    class_type: 'MiniMaxH3ImageToVideo',
+    inputs: {
+      prompt: '{prompt}',
+      width: ['115', 0],
+      height: ['115', 1],
+      length: ['105:107', 1],
+      clip: ['105:122', 0],
+      vae: ['105:11', 0],
+    },
+  },
+  '105:107': {
+    class_type: 'ComfyMathExpression',
+    inputs: {
+      expression: 'max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17',
+      'values.a': ['105:111', 0],
+    },
+  },
+  '105:111': {
+    class_type: 'PrimitiveFloat',
+    inputs: { value: '{duration}' },
+  },
+  '105:121': {
+    class_type: 'SelectModelDevice',
+    inputs: { device: 'gpu:2', model: ['105:6', 0] },
+  },
+  '105:122': {
+    class_type: 'SelectCLIPDevice',
+    inputs: { device: 'gpu:1', clip: ['105:13', 0] },
   },
 })
 
@@ -124,29 +234,6 @@ function readConfig(): {
   }
 }
 
-interface ComfyVideoRef {
-  filename: string
-  subfolder?: string
-  type?: string
-}
-
-/** 从 ComfyUI /view 资产 URL 解析服务器侧文件名，供 LoadVideo/{prev_video} 注入 */
-function parseComfyViewUrl(url: string): ComfyVideoRef | undefined {
-  try {
-    const u = new URL(url)
-    if (!u.pathname.endsWith('/view')) return undefined
-    const filename = u.searchParams.get('filename')
-    if (!filename) return undefined
-    return {
-      filename,
-      subfolder: u.searchParams.get('subfolder') ?? undefined,
-      type: u.searchParams.get('type') ?? undefined,
-    }
-  } catch {
-    return undefined
-  }
-}
-
 type WorkflowGraph = Record<string, { class_type: string; inputs: Record<string, unknown> }>
 
 function uniqueNodeId(graph: WorkflowGraph, base: string): string {
@@ -159,33 +246,50 @@ function uniqueNodeId(graph: WorkflowGraph, base: string): string {
   return id
 }
 
-/** 把引用占位符替换为节点引用；ref 为空时删除该输入，避免悬空引用 */
+/** 递归替换占位符：兼容 autogrow 容器 */
+function replaceValue(
+  value: unknown,
+  placeholder: string,
+  ref: [string, number] | undefined,
+): void {
+  if (Array.isArray(value)) {
+    for (const item of value) replaceValue(item, placeholder, ref)
+    return
+  }
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>
+    for (const key of Object.keys(record)) {
+      if (record[key] === placeholder) {
+        if (ref) record[key] = ref
+        else delete record[key]
+      } else {
+        replaceValue(record[key], placeholder, ref)
+      }
+    }
+  }
+}
+
+/** 把引用占位符替换为节点引用；ref 为空时删除对应输入，避免悬空引用 */
 function replaceInputRef(
   graph: WorkflowGraph,
   placeholder: string,
   ref: [string, number] | undefined,
 ): void {
   for (const node of Object.values(graph)) {
-    for (const key of Object.keys(node.inputs)) {
-      if (node.inputs[key] === placeholder) {
-        if (ref) node.inputs[key] = ref
-        else delete node.inputs[key]
-      }
-    }
+    replaceValue(node.inputs, placeholder, ref)
   }
 }
 
 /**
  * 动态注入工作流输入：
- * - 值占位符 {image}/{prev_video}/{duration}：替换为文件名/时长；
- * - 节点引用占位符 {image_link}/{prev_video_link}：有输入时动态插入
- *   LoadImage/VHS_LoadVideo 节点并接线，无输入时删除对应输入，避免空节点报错。
+ * - 值占位符 {image}/{duration}：替换为文件名/时长；
+ * - 节点引用占位符 {image_link}：有输入时动态插入 LoadImage 节点并接线，
+ *   无输入时删除对应输入，避免空节点报错。
  */
 function applyDynamicInputs(
   graph: WorkflowGraph,
   opts: {
     inputImage?: { name: string; subfolder?: string; type?: string }
-    prevVideo?: ComfyVideoRef
     duration?: number
   },
 ): void {
@@ -205,27 +309,6 @@ function applyDynamicInputs(
         graph[loadImageId].inputs.image = opts.inputImage.name
         if (opts.inputImage.subfolder) graph[loadImageId].inputs.subfolder = opts.inputImage.subfolder
         if (opts.inputImage.type) graph[loadImageId].inputs.type = opts.inputImage.type
-      }
-    }
-  }
-  if (opts.prevVideo) {
-    let replaced = false
-    for (const node of Object.values(graph)) {
-      for (const key of Object.keys(node.inputs)) {
-        if (node.inputs[key] === '{prev_video}') {
-          node.inputs[key] = opts.prevVideo.filename
-          replaced = true
-        }
-      }
-    }
-    if (!replaced) {
-      const loadVideoId = Object.keys(graph).find((id) =>
-        graph[id].class_type.toLowerCase().includes('loadvideo'),
-      )
-      if (loadVideoId && graph[loadVideoId].inputs) {
-        graph[loadVideoId].inputs.video = opts.prevVideo.filename
-        if (opts.prevVideo.subfolder) graph[loadVideoId].inputs.subfolder = opts.prevVideo.subfolder
-        if (opts.prevVideo.type) graph[loadVideoId].inputs.type = opts.prevVideo.type
       }
     }
   }
@@ -249,27 +332,6 @@ function applyDynamicInputs(
     replaceInputRef(graph, '{image_link}', undefined)
   }
 
-  if (opts.prevVideo) {
-    const id = uniqueNodeId(graph, 'ai-director-video')
-    graph[id] = {
-      class_type: 'VHS_LoadVideo',
-      inputs: {
-        video: opts.prevVideo.filename,
-        force_rate: 0,
-        force_size: 'Disabled',
-        frame_load_cap: 0,
-        skip_first_frames: 0,
-        select_every_nth: 1,
-        single_image_load: false,
-        simple_schedule: false,
-      },
-    }
-    if (opts.prevVideo.subfolder) graph[id].inputs.subfolder = opts.prevVideo.subfolder
-    if (opts.prevVideo.type) graph[id].inputs.type = opts.prevVideo.type
-    replaceInputRef(graph, '{prev_video_link}', [id, 0])
-  } else {
-    replaceInputRef(graph, '{prev_video_link}', undefined)
-  }
 }
 
 /** 由 HTTP baseUrl 推导 WebSocket 地址：http→ws、https→wss，路径固定为 /ws */
@@ -403,6 +465,41 @@ function mimeFor(filename: string): string {
   }
 }
 
+/** 浏览器端抽取视频最后一帧：抓取视频 → <video> 定位结尾 → canvas → PNG */
+async function defaultFrameExtractor(inputUrl: string): Promise<Blob> {
+  const res = await fetch(inputUrl)
+  if (!res.ok) throw new Error(`获取上一段视频失败（${res.status}）`)
+  const blob = await res.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  try {
+    const video = document.createElement('video')
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'auto'
+    video.src = objectUrl
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve()
+      video.onerror = () => reject(new Error('无法解码上一段视频'))
+    })
+    video.currentTime = Math.max(0, (video.duration ?? 0) - 0.05)
+    await new Promise<void>((resolve, reject) => {
+      video.onseeked = () => resolve()
+      video.onerror = () => reject(new Error('无法定位上一段视频结尾'))
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('无法创建画布')
+    ctx.drawImage(video, 0, 0)
+    const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (!png) throw new Error('无法导出尾帧图片')
+    return png
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
 function mimeToExt(mime: string): string | undefined {
   const table: Record<string, string> = {
     'image/png': 'png',
@@ -418,6 +515,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
   const pollIntervalMs = opts.pollIntervalMs ?? 1000
   const wsCtor: WsCtor | undefined =
     opts.wsCtor ?? (typeof WebSocket !== 'undefined' ? WebSocket : undefined)
+  const frameExtractor = opts.frameExtractor ?? defaultFrameExtractor
   let seq = 0
 
   const ctrl = createJobController({ pollIntervalMs })
@@ -639,7 +737,6 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     negativePrompt: string | undefined,
     seed: number,
     inputImage?: { name: string; subfolder?: string; type?: string },
-    prevVideo?: ComfyVideoRef,
     duration?: number,
   ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
     if (templateId) {
@@ -656,7 +753,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
         negativeNodeId: template.negativeNodeId,
         seedNodeId: template.seedNodeId,
       })
-      applyDynamicInputs(injected, { inputImage, prevVideo, duration })
+      applyDynamicInputs(injected, { inputImage, duration })
       return injected
     }
     // 无模板：图片用内置文生图模板；视频明确报错
@@ -716,6 +813,29 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     return injected
   }
 
+  /** 全动态搭建 MiniMax H3 视频工作流（无需模板）：按需插入首帧图 */
+  function buildMiniMaxH3Graph(
+    prompt: string,
+    seed: number,
+    duration: number,
+    inputImage: { name: string; subfolder?: string; type?: string } | undefined,
+  ): WorkflowGraph {
+    const graph = JSON.parse(DEFAULT_MINIMAX_H3_WORKFLOW) as WorkflowGraph
+    graph['105:104'].inputs.prompt = prompt
+    graph['105:15'].inputs.noise_seed = seed
+    applyDynamicInputs(graph, { duration })
+    if (inputImage) {
+      const imgId = uniqueNodeId(graph, 'ai-director-image')
+      graph[imgId] = { class_type: 'LoadImage', inputs: { image: inputImage.name } }
+      if (inputImage.subfolder) graph[imgId].inputs.subfolder = inputImage.subfolder
+      if (inputImage.type) graph[imgId].inputs.type = inputImage.type
+      graph['105:104'].inputs.first_frame = [imgId, 0]
+    } else {
+      delete graph['105:104'].inputs.first_frame
+    }
+    return graph
+  }
+
   /** 把参考图上传到 ComfyUI /upload/image，返回服务器侧文件名，供 LoadImage 使用 */
   async function uploadInputImage(inputUrl: string): Promise<{
     name: string
@@ -740,6 +860,29 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     }
     const data = (await uploadRes.json()) as { name?: string; subfolder?: string; type?: string }
     if (!data.name) throw new Error('ComfyUI 上传参考图未返回文件名')
+    return { name: data.name, subfolder: data.subfolder, type: data.type }
+  }
+
+  /** 把已抽出的尾帧 PNG 上传到 /upload/image，返回服务器侧文件名 */
+  async function uploadImageBlob(blob: Blob): Promise<{
+    name: string
+    subfolder?: string
+    type?: string
+  }> {
+    const { baseUrl } = readConfig()
+    const form = new FormData()
+    form.append('image', blob, 'ai-director-frame.png')
+    form.append('overwrite', 'true')
+    const uploadRes = await fetch(`${baseUrl}/upload/image`, {
+      method: 'POST',
+      body: form,
+    })
+    if (!uploadRes.ok) {
+      const text = await uploadRes.text().catch(() => '')
+      throw new Error(`ComfyUI 上传尾帧失败（${uploadRes.status}）：${text.slice(0, 200)}`)
+    }
+    const data = (await uploadRes.json()) as { name?: string; subfolder?: string; type?: string }
+    if (!data.name) throw new Error('ComfyUI 上传尾帧未返回文件名')
     return { name: data.name, subfolder: data.subfolder, type: data.type }
   }
 
@@ -786,17 +929,47 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     const seed = Math.floor(Math.random() * 1e9)
     const imageAssetId = 'imageAssetId' in params ? params.imageAssetId : undefined
     const prevVideoAssetId = params.prevVideoAssetId
-    const duration = params.duration
-    // 上一段视频存在且能解析出 ComfyUI 服务器文件名时，走续写工作流模板
-    let prevVideo: ComfyVideoRef | undefined
+    const duration = params.duration ?? 5
+
+    // 续写：浏览器抽取上一段视频的最后一帧 → 上传为图片 → 作为 first_frame
+    let continuationFrame: { name: string; subfolder?: string; type?: string } | undefined
     if (prevVideoAssetId) {
       const prevUrl = await resolveAssetUrl(prevVideoAssetId)
-      prevVideo = prevUrl ? parseComfyViewUrl(prevUrl) : undefined
+      if (prevUrl) {
+        try {
+          const frame = await frameExtractor(prevUrl)
+          continuationFrame = await uploadImageBlob(frame)
+        } catch {
+          // 抽帧/上传失败：不续写，走普通视频生成
+        }
+      }
     }
-    const templateId = prevVideo
-      ? (continuationVideoWorkflowTemplateId ?? videoWorkflowTemplateId)
-      : videoWorkflowTemplateId
-    const jobType = prevVideo ? 'videoContinue' : imageAssetId ? 'image2video' : 'text2video'
+
+    if (continuationFrame) {
+      const jobType = 'videoContinue'
+      if (continuationVideoWorkflowTemplateId) {
+        const graph = buildGraph(
+          continuationVideoWorkflowTemplateId,
+          params.prompt ?? '',
+          undefined,
+          seed,
+          continuationFrame,
+          duration,
+        )
+        return submitWorkflow(graph, jobType, params.shotRef, seed)
+      }
+      // 未配置续写模板：全动态搭建（尾帧作首帧）
+      const graph = buildMiniMaxH3Graph(
+        params.prompt ?? '',
+        seed,
+        duration,
+        continuationFrame,
+      )
+      return submitWorkflow(graph, jobType, params.shotRef, seed)
+    }
+
+    const templateId = videoWorkflowTemplateId
+    const jobType = imageAssetId ? 'image2video' : 'text2video'
     if (imageAssetId) {
       const inputUrl = await resolveAssetUrl(imageAssetId)
       if (!inputUrl) {
@@ -804,21 +977,25 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       }
       // 首帧图上传到 ComfyUI，把服务器文件名注入 LoadImage/{image}
       const uploaded = await uploadInputImage(inputUrl)
+      if (!templateId) {
+        // 未配置视频模板：全动态搭建基础视频工作流（首帧图）
+        const graph = buildMiniMaxH3Graph(params.prompt ?? '', seed, duration, uploaded)
+        return submitWorkflow(graph, jobType, params.shotRef, seed)
+      }
       const graph = buildGraph(
         templateId,
         params.prompt ?? '',
         undefined,
         seed,
         uploaded,
-        prevVideo,
         duration,
       )
       return submitWorkflow(graph, jobType, params.shotRef, seed)
     }
     if (!templateId) {
-      throw new Error(
-        '未配置视频工作流模板：请在「设置 → ComfyUI 媒体」的视频工作流模板中导入并选择文生视频/图生视频工作流。',
-      )
+      // 未配置视频模板：全动态搭建基础视频工作流（无首帧）
+      const graph = buildMiniMaxH3Graph(params.prompt ?? '', seed, duration, undefined)
+      return submitWorkflow(graph, jobType, params.shotRef, seed)
     }
     const graph = buildGraph(
       templateId,
@@ -826,7 +1003,6 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       undefined,
       seed,
       undefined,
-      prevVideo,
       duration,
     )
     return submitWorkflow(graph, jobType, params.shotRef, seed)
@@ -870,7 +1046,7 @@ export function createMediaComfyUIPlugin(opts?: MediaComfyUIOptions): ProviderPl
     providerType: 'media',
     enabled: true,
     description:
-      '调用本地 ComfyUI 工作流生成图片与视频。可在「设置 → ComfyUI 工作流模板」导入 API 格式模板；「文生图工作流模板」用于图片，「图生图工作流模板」用于参考生图，「视频工作流模板」用于文生视频/图生视频，「视频续写工作流模板」用于参照上一段视频结尾继续生成（如 MiniMax H3 Motion Context）。',
+      '调用本地 ComfyUI 工作流生成图片与视频。未配置模板时自动用内置 MiniMax H3 工作流搭建；续写时在浏览器抽取上一段视频最后一帧作为首帧。也可在「设置 → ComfyUI 工作流模板」导入 API 格式模板覆盖。「文生图工作流模板」用于图片，「图生图工作流模板」用于参考生图，「视频工作流模板」用于文生视频/图生视频，「视频续写工作流模板」用于参照上一段视频结尾继续生成。',
     capabilities: instance.capabilities,
     configFields: [
       'baseUrl',

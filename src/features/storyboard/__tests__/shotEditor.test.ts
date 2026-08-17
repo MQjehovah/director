@@ -136,6 +136,24 @@ describe('shot grid', () => {
     expect(w.find('[data-test="shot-thumb-img"]').exists()).toBe(false)
   })
 
+  it('toggles 连续生成 on video shot cards', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' })
+    const w = mount(ShotGrid)
+    const toggle = w.get('[data-test="continue-toggle"]')
+    await toggle.find('input').setValue(true)
+    expect(store.shotById(shot.id)?.metadata.continueFromPrev).toBe(true)
+    await toggle.find('input').setValue(false)
+    expect(store.shotById(shot.id)?.metadata.continueFromPrev).toBeUndefined()
+  })
+
+  it('does not show 连续生成 for image shots', () => {
+    const store = useStoryboardStore()
+    store.addShot({ shotType: 'image' })
+    const w = mount(ShotGrid)
+    expect(w.find('[data-test="continue-toggle"]').exists()).toBe(false)
+  })
+
   it('emits select with the shot id when a card is clicked', async () => {
     const store = useStoryboardStore()
     const shot = store.addShot({ shotType: 'image' as const, prompt: '第一个' })
@@ -383,7 +401,7 @@ describe('useShotActions', () => {
     expect(job?.type).toBe('image2video')
   })
 
-  it('video shots reference the nearest previous video asset for continuation', async () => {
+  it('references the previous video for continuation only when 连续生成 is enabled', async () => {
     initMedia()
     const store = useStoryboardStore()
     const first = store.addShot({ shotType: 'video' as const, prompt: '第一段' })
@@ -391,6 +409,13 @@ describe('useShotActions', () => {
       mediaAssets: ['https://example.com/view?filename=prev.mp4&type=output'],
     })
     const second = store.addShot({ shotType: 'video' as const, prompt: '第二段' })
+    await useShotActions().generateMedia(second.id)
+    await wait(100)
+    // 未勾选：不续写
+    expect(store.shotById(second.id)?.metadata.continuationFrom).toBeUndefined()
+
+    // 勾选后：续写上一段视频
+    store.updateShot(second.id, { metadata: { continueFromPrev: true } })
     const job = await useShotActions().generateMedia(second.id)
     expect(job).toBeDefined()
     expect(store.shotById(second.id)?.metadata.continuationFrom).toBe(
