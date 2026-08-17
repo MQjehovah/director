@@ -11,6 +11,7 @@ export const BeatSchema = z.object({
   id: z.string().min(1),
   type: BeatTypeSchema,
   dialogue: DialogueSchema.optional(),
+  action: z.string().optional(),
   shotRef: z.string().optional(),
 })
 

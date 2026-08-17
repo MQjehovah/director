@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CharacterSchema, ShotSchema, JobSchema } from '../index'
+import { CharacterSchema, ShotSchema, JobSchema, BeatSchema } from '../index'
 
 describe('domain models', () => {
   it('validates a character', () => {
@@ -14,5 +14,10 @@ describe('domain models', () => {
     const j = JobSchema.parse({ id: 'j1', type: 'text2image', status: 'queued' })
     expect(j.status).toBe('queued')
     expect(() => JobSchema.parse({ id: 'j2', type: 'x', status: 'bogus' })).toThrow()
+  })
+  it('accepts an action beat with its action text', () => {
+    const b = BeatSchema.parse({ id: 'b1', type: 'action', action: '小明推门而入' })
+    expect(b.action).toBe('小明推门而入')
+    expect(b.dialogue).toBeUndefined()
   })
 })
