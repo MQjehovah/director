@@ -7,6 +7,9 @@ dist-ssr
 
 # local env files
 *.local
+.env
+.env.*
+!.env.example
 
 # editor / os
 .DS_Store
