@@ -161,10 +161,10 @@ describe('plugin store', () => {
         providerType: 'media',
         enabled: true,
         capabilities: ['text2image'],
-      })
+      } as unknown as ProviderPlugin)
       s.init(r)
       s.setActiveProvider('media', 'media-no-instance')
-      expect(s.resolveInstanceCapability('media', 'text2image')?.id).toBe('media-mock')
+      expect((s.resolveInstanceCapability('media', 'text2image') as { id: string } | undefined)?.id).toBe('media-mock')
     })
 
     it('resolveProviderCapability skips disabled providers', () => {
