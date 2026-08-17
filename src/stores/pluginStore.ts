@@ -94,7 +94,24 @@ export const usePluginStore = defineStore('plugin', () => {
     type: ProviderType,
     cap: MediaCapability,
   ): T | undefined {
-    return resolveProviderCapability(type, cap)?.instance as T | undefined
+    const r = registry.value
+    if (!r) return undefined
+    const preferredId = activeProviders.value[type]
+    if (preferredId) {
+      const preferred = r.getProvider(preferredId)
+      if (
+        preferred &&
+        enabledState[preferred.id] &&
+        hasCapability(preferred, cap) &&
+        preferred.instance !== undefined
+      ) {
+        return preferred.instance as T
+      }
+    }
+    const fallback = enabledProviders(type).find(
+      (p) => hasCapability(p, cap) && p.instance !== undefined,
+    )
+    return fallback?.instance as T | undefined
   }
 
   const mediaProvider = computed<MediaProvider | undefined>(() => resolveInstance<MediaProvider>('media'))

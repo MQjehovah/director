@@ -76,7 +76,8 @@ export function createJobController(opts: JobControllerOptions = {}): JobControl
   function patchJob(id: string, patch: Partial<Job>): void {
     const current = jobs.get(id)
     if (!current) throw new Error(`job not found: ${id}`)
-    setJob({ ...current, ...patch })
+    // 固定 id：即使 patch 误带其他 id 也不会把任务复制到新 id
+    setJob({ ...current, ...patch, id })
   }
 
   function reportProgress(id: string, p: number): void {

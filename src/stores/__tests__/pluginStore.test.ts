@@ -150,6 +150,23 @@ describe('plugin store', () => {
       expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('media-mock')
     })
 
+    it('resolveInstanceCapability falls back when the preferred provider has no instance', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(createMediaMockPlugin())
+      r.register({
+        id: 'media-no-instance',
+        name: 'No Instance Media',
+        kind: 'provider',
+        providerType: 'media',
+        enabled: true,
+        capabilities: ['text2image'],
+      })
+      s.init(r)
+      s.setActiveProvider('media', 'media-no-instance')
+      expect(s.resolveInstanceCapability('media', 'text2image')?.id).toBe('media-mock')
+    })
+
     it('resolveProviderCapability skips disabled providers', () => {
       const s = usePluginStore()
       const r = new PluginRegistry()
