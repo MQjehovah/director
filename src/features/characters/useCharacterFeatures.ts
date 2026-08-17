@@ -90,9 +90,11 @@ export function useCharacterFeatures() {
     try {
       const latest = await media.getJob(job.id)
       if (latest.status === 'done') {
+        jobStore.updateJob(latest)
         applyAsset(latest.result?.assetIds ?? [])
         off()
       } else if (latest.status === 'failed' || latest.status === 'canceled') {
+        jobStore.updateJob(latest)
         off()
       }
     } catch {

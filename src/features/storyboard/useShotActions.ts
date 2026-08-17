@@ -98,9 +98,11 @@ export function useShotActions() {
     try {
       const latest = await media.getJob(job.id)
       if (latest.status === 'done') {
+        jobStore.updateJob(latest)
         applyAsset(latest.result?.assetIds ?? [])
         finish()
       } else if (latest.status === 'failed' || latest.status === 'canceled') {
+        jobStore.updateJob(latest)
         finish()
       }
     } catch {

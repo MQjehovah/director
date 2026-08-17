@@ -218,6 +218,50 @@ describe('useShotActions', () => {
     expect(job?.type).toBe('text2video')
   })
 
+  it('reconciles a provider that completes synchronously into the job store', async () => {
+    setActivePinia(createPinia())
+    const registry = new PluginRegistry()
+    registry.register({
+      id: 'media-sync',
+      name: 'Sync Media',
+      kind: 'provider',
+      providerType: 'media',
+      enabled: true,
+      capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+      instance: {
+        id: 'media-sync',
+        name: 'Sync Media',
+        capabilities: { text2image: true, image2video: false, text2video: false, upscale: false },
+        async generateImage() {
+          return {
+            id: 'sync-job',
+            type: 'text2image',
+            status: 'done',
+            progress: 100,
+            pluginId: 'media-sync',
+            result: { assetIds: ['sync-asset'] },
+          }
+        },
+        async getJob() {
+          return { id: 'sync-job', type: 'text2image', status: 'done', progress: 100, result: { assetIds: ['sync-asset'] } }
+        },
+        onJobUpdate() {
+          return () => {}
+        },
+        async cancelJob() {
+          return { id: 'sync-job', type: 'text2image', status: 'canceled', progress: 100 }
+        },
+      },
+    })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = store.addShot({ shotType: 'image', prompt: '同步完成' })
+    await useShotActions().generateMedia(shot.id)
+    expect(jobs.getJob('sync-job')?.status).toBe('done')
+    expect(store.shotById(shot.id)?.mediaAssets).toContain('sync-asset')
+  })
+
   it('generateMedia reuses a running job instead of creating a duplicate', async () => {
     initMedia()
     const store = useStoryboardStore()

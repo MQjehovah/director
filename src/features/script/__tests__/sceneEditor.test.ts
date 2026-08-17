@@ -197,6 +197,22 @@ describe('script panel', () => {
     )
     expect(w.get('[data-test="message"]').text()).toContain('已切分')
   })
+
+  it('拒绝重复切分，避免破坏已生成的媒体', async () => {
+    const store = useScriptStore()
+    const storyboard = useStoryboardStore()
+    const scene = store.addScene({ title: '屋顶' })
+    store.addBeat(scene.id, { type: 'dialogue', dialogue: { speaker: '小明', text: '你好' } })
+    const w = mount(ScriptPanel)
+    await w.get('[data-test="scene-item"]').trigger('click')
+    await w.get('[data-test="cut-btn"]').trigger('click')
+    expect(storyboard.shots).toHaveLength(1)
+    storyboard.updateShot(storyboard.shots[0].id, { mediaAssets: ['已生成资产'] })
+    await w.get('[data-test="cut-btn"]').trigger('click')
+    expect(storyboard.shots).toHaveLength(1)
+    expect(storyboard.shots[0].mediaAssets).toContain('已生成资产')
+    expect(w.get('[data-test="message"]').text()).toContain('已切分')
+  })
 })
 
 describe('useScriptFeatures', () => {

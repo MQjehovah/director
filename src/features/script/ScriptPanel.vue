@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useScriptStore } from '../../stores/scriptStore'
+import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useScriptFeatures } from './useScriptFeatures'
 import { Button, Input, Textarea } from '../../components/ui'
 import SceneEditor from './SceneEditor.vue'
@@ -73,6 +74,15 @@ function onCutScene(): void {
   message.value = ''
   if (!selectedId.value) {
     message.value = '请先选择一个场次。'
+    return
+  }
+  const scene = store.scenes.find((s) => s.id === selectedId.value)
+  if (!scene) return
+  const beatIds = new Set(scene.beats.map((b) => b.id))
+  const storyboard = useStoryboardStore()
+  const hasShots = storyboard.shots.some((s) => s.beatRef && beatIds.has(s.beatRef))
+  if (hasShots) {
+    message.value = '该场次已切分为镜头，如需重新切分请先删除现有镜头。'
     return
   }
   const shots = features.cutSceneToShots(selectedId.value)
