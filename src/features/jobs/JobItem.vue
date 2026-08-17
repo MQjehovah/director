@@ -6,6 +6,7 @@ import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useShotActions } from '../storyboard/useShotActions'
 import { Badge, Progress } from '../../components/ui'
 import { jobStatusInfo, jobTypeLabel } from './jobMeta'
+import { capabilityForJobType } from '../../providers/capabilities'
 import type { Job } from '../../core/models'
 
 const props = defineProps<{ jobId: string }>()
@@ -46,13 +47,15 @@ interface CancelableProvider {
 
 // Provider resolution: prefer the owning pluginId so a provider swap between
 // job creation and cancellation still cancels the right instance. Fall back to
-// a job-type mapping for jobs whose pluginId is absent.
-const MEDIA_JOB_TYPES = new Set(['text2image', 'image2video', 'text2video', 'upscale'])
-
+// a job-type→capability mapping for jobs whose pluginId is absent.
 function cancelProviderOf(j: Job): CancelableProvider | undefined {
   const byPlugin = pluginStore.getProviderInstance<CancelableProvider>(j.pluginId)
   if (byPlugin?.cancelJob) return byPlugin
-  if (MEDIA_JOB_TYPES.has(j.type)) return pluginStore.mediaProvider
+  const cap = capabilityForJobType(j.type)
+  if (cap) {
+    const byCap = pluginStore.resolveInstanceCapability<CancelableProvider>('media', cap)
+    if (byCap?.cancelJob) return byCap
+  }
   if (j.type === 'tts') return pluginStore.ttsProvider
   return undefined
 }

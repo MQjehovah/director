@@ -1,6 +1,8 @@
 export { createJobController } from './shared'
 export type { JobController, JobControllerOptions } from './shared'
 
+export { capabilityForJobType } from './job-type-capability'
+
 export type { TextToImageParams, TextToImageCapability } from './text-to-image'
 export type { TextToVideoParams, TextToVideoCapability } from './text-to-video'
 export type { ImageToVideoParams, ImageToVideoCapability } from './image-to-video'

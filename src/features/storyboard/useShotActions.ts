@@ -4,6 +4,7 @@ import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useJobStore } from '../../stores/jobStore'
 import type { Asset, Job, Shot } from '../../core/models'
 import type { MediaCapability } from '../../core/plugin/types'
+import { capabilityForJobType } from '../../providers/capabilities'
 import type { MediaCapabilityProvider } from '../../providers/capabilities'
 import type { MediaProvider } from '../../providers/MediaProvider'
 
@@ -18,10 +19,24 @@ function isImageSrc(value: string): boolean {
   return value.startsWith('data:') || value.startsWith('http') || value.startsWith('/')
 }
 
-/** 按镜头需求选择能力：image → text2image；video → image2video（有图）或 text2video */
+/** 镜头用于 image2video 的输入图 id（记录于 metadata，避免与输出视频资产混淆） */
+function recordedInputImage(shot: Shot | undefined): string | undefined {
+  const value = shot?.metadata?.inputImageAssetId
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/** 计算 image2video 的输入图：显式记录优先，其次回退到 mediaAssets 中的图片直链 */
+function imageInputFor(shot: Shot | undefined): string | undefined {
+  const recorded = recordedInputImage(shot)
+  if (recorded) return recorded
+  const first = shot?.mediaAssets[0]
+  return first && isImageSrc(first) ? first : undefined
+}
+
+/** 按镜头需求选择能力：image → text2image；video → image2video（有输入图）或 text2video */
 function capabilityForShot(shot: Shot | undefined): MediaCapability {
   if (!shot || shot.shotType !== 'video') return 'text2image'
-  return shot.mediaAssets.length > 0 ? 'image2video' : 'text2video'
+  return imageInputFor(shot) ? 'image2video' : 'text2video'
 }
 
 export function useShotActions() {
@@ -53,10 +68,16 @@ export function useShotActions() {
     let providerJob: Job
     try {
       if (shot.shotType === 'video') {
-        const imageAssetId = shot.mediaAssets[0]
+        const imageAssetId = imageInputFor(shot)
         providerJob = imageAssetId
           ? await media.generateVideo({ imageAssetId, prompt: prompt || undefined, shotRef: shotId })
           : await media.generateVideo({ prompt, shotRef: shotId })
+        // 记录 image2video 所用输入图，供二次生成路由与引用
+        if (imageAssetId) {
+          storyboardStore.updateShot(shotId, {
+            metadata: { ...(shot.metadata ?? {}), inputImageAssetId: imageAssetId },
+          })
+        }
       } else {
         providerJob = await media.generateImage({
           prompt,
@@ -130,13 +151,13 @@ export function useShotActions() {
     if (!job) return
     if (job.status !== 'queued' && job.status !== 'running') return
     // 任务属于创建它的 Provider（job.pluginId），切换 Provider 后仍取消到正确的实例；
-    // 缺少 pluginId 时回退到按镜头需求的 capability Provider。
+    // 缺少 pluginId 时按任务类型解析具备该能力的 Provider。
+    const cap = capabilityForJobType(job.type)
     const media =
       pluginStore.getProviderInstance<MediaCapabilityProvider>(job.pluginId) ??
-      pluginStore.resolveInstanceCapability<MediaCapabilityProvider>(
-        'media',
-        capabilityForShot(storyboardStore.shotById(shotId)),
-      )
+      (cap
+        ? pluginStore.resolveInstanceCapability<MediaCapabilityProvider>('media', cap)
+        : undefined)
     if (!media) return
     try {
       await media.cancelJob(job.id)

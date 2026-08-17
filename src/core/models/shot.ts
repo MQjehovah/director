@@ -25,6 +25,7 @@ export const ShotSchema = z.object({
   seed: z.number().optional(),
   mediaAssets: z.array(z.string()).default([]),
   renderJobRef: z.string().optional(),
+  metadata: z.record(z.unknown()).default({}),
 })
 
 export type Shot = z.infer<typeof ShotSchema>
