@@ -10,6 +10,7 @@ import type {
 import { createJobController } from '../../providers/capabilities'
 import { loadProviderConfig } from '../../features/settings/httpBackendConfig'
 import { getWorkflowTemplate } from '../../features/comfyui/workflowStore'
+import { usePluginStore } from '../../stores/pluginStore'
 
 export const MEDIA_COMFYUI_ID = 'media-comfyui'
 
@@ -75,7 +76,7 @@ interface ComfyHistory {
   }
 }
 
-function readConfig(): { baseUrl: string; workflowTemplateId?: string } {
+function readConfig(): { baseUrl: string; workflowTemplateId?: string; videoWorkflowTemplateId?: string } {
   const config = loadProviderConfig(MEDIA_COMFYUI_ID) ?? {}
   const baseUrl = String(config.baseUrl ?? '').replace(/\/+$/, '')
   if (!baseUrl) {
@@ -85,7 +86,12 @@ function readConfig(): { baseUrl: string; workflowTemplateId?: string } {
     typeof config.workflowTemplateId === 'string' && config.workflowTemplateId.trim() !== ''
       ? config.workflowTemplateId.trim()
       : undefined
-  return { baseUrl, workflowTemplateId }
+  const videoWorkflowTemplateId =
+    typeof config.videoWorkflowTemplateId === 'string' &&
+    config.videoWorkflowTemplateId.trim() !== ''
+      ? config.videoWorkflowTemplateId.trim()
+      : undefined
+  return { baseUrl, workflowTemplateId, videoWorkflowTemplateId }
 }
 
 /** 由 HTTP baseUrl 推导 WebSocket 地址：http→ws、https→wss，路径固定为 /ws */
@@ -142,14 +148,16 @@ function injectIntoNodes(
   ids: TemplateNodeIds,
 ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
   let promptNodeId = ids.promptNodeId
-  if (!promptNodeId) {
-    let placeholderFound = false
+  let promptInjected = false
+  if (promptNodeId) {
+    promptInjected = true
+  } else {
     for (const node of Object.values(graph)) {
       for (const key of Object.keys(node.inputs)) {
         const value = node.inputs[key]
         if (value === '{prompt}') {
           node.inputs[key] = prompt
-          placeholderFound = true
+          promptInjected = true
         } else if (value === '{negative_prompt}') {
           node.inputs[key] = negativePrompt ?? ''
         } else if (value === '{seed}') {
@@ -157,7 +165,7 @@ function injectIntoNodes(
         }
       }
     }
-    if (!placeholderFound) {
+    if (!promptInjected) {
       promptNodeId = Object.keys(graph).find((id) =>
         graph[id].class_type.includes('CLIPTextEncode'),
       )
@@ -166,7 +174,7 @@ function injectIntoNodes(
 
   if (promptNodeId && graph[promptNodeId]) {
     graph[promptNodeId].inputs.text = prompt
-  } else {
+  } else if (!promptInjected) {
     throw new Error('工作流缺少提示词节点，请重新导入模板或检查模板。')
   }
 
@@ -275,6 +283,26 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     return assets.get(assetId)
   }
 
+  /** 解析资产 id → 图片 URL：先查本 provider 生成资产，再回退到存储 Provider（上传图片） */
+  async function resolveAssetUrl(assetId: string): Promise<string | undefined> {
+    if (assetId.startsWith('data:') || assetId.startsWith('http') || assetId.startsWith('blob:')) {
+      return assetId
+    }
+    const own = assets.get(assetId)
+    if (own?.url) return own.url
+    if (own?.localPath && !own.localPath.startsWith('idb://')) return own.localPath
+    const storage = usePluginStore().storageProvider
+    if (storage?.loadAsset) {
+      try {
+        const asset = await storage.loadAsset(assetId)
+        if (asset) return await storage.getAssetUrl(asset)
+      } catch {
+        // fall through
+      }
+    }
+    return undefined
+  }
+
   async function fetchImage(baseUrl: string, image: { filename: string; subfolder?: string; type?: string }): Promise<{ url: string; mime: string }> {
     const params = new URLSearchParams({ filename: image.filename })
     if (image.subfolder) params.set('subfolder', image.subfolder)
@@ -330,28 +358,14 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     }
   }
 
-  async function generateImage(params: TextToImageParams): Promise<Job> {
-    const { baseUrl, workflowTemplateId } = readConfig()
-    ensureWs(baseUrl)
-    const seed = params.seed ?? Math.floor(Math.random() * 1e9)
-    let graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>
-    if (workflowTemplateId) {
-      const template = getWorkflowTemplate(workflowTemplateId)
-      if (!template) {
-        throw new Error('ComfyUI 工作流模板不存在，请在「设置」中重新选择或导入模板。')
-      }
-      graph = JSON.parse(template.graphJson) as Record<
-        string,
-        { class_type: string; inputs: Record<string, unknown> }
-      >
-      graph = injectIntoNodes(graph, params.prompt, params.negativePrompt, seed, {
-        promptNodeId: template.promptNodeId,
-        negativeNodeId: template.negativeNodeId,
-        seedNodeId: template.seedNodeId,
-      })
-    } else {
-      graph = injectPlaceholders(DEFAULT_TXT2IMG_WORKFLOW, params.prompt, params.negativePrompt, seed)
-    }
+  /** 提交工作流到 /prompt 并注册任务轮询；返回已注册的 Job */
+  async function submitWorkflow(
+    graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+    type: string,
+    shotRef: string | undefined,
+    seed: number,
+  ): Promise<Job> {
+    const { baseUrl } = readConfig()
     const res = await fetch(`${baseUrl}/prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -366,12 +380,12 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     if (!promptId) throw new Error('ComfyUI 未返回 prompt_id')
     const job = JobSchema.parse({
       id: promptId,
-      type: 'text2image',
+      type,
       status: 'queued',
       progress: 0,
-      shotRef: params.shotRef,
+      shotRef,
       pluginId: MEDIA_COMFYUI_ID,
-      params: { prompt: params.prompt, negativePrompt: params.negativePrompt, seed },
+      params: { seed },
     })
     ctrl.setJob(job)
     activePromptIds.add(job.id)
@@ -379,14 +393,97 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     return job
   }
 
-  async function generateVideo(_params: ImageToVideoParams | TextToVideoParams): Promise<Job> {
-    throw new Error('ComfyUI 媒体当前仅支持文生图（text2image）。')
+  /** 解析工作流模板：按 id 加载并注入提示词/seed/输入图 */
+  function buildGraph(
+    templateId: string | undefined,
+    prompt: string,
+    negativePrompt: string | undefined,
+    seed: number,
+    inputImageUrl?: string,
+  ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
+    if (templateId) {
+      const template = getWorkflowTemplate(templateId)
+      if (!template) {
+        throw new Error('ComfyUI 工作流模板不存在，请在「设置」中重新选择或导入模板。')
+      }
+      const graph = JSON.parse(template.graphJson) as Record<
+        string,
+        { class_type: string; inputs: Record<string, unknown> }
+      >
+      const injected = injectIntoNodes(graph, prompt, negativePrompt, seed, {
+        promptNodeId: template.promptNodeId,
+        negativeNodeId: template.negativeNodeId,
+        seedNodeId: template.seedNodeId,
+      })
+      if (inputImageUrl) {
+        // 把 {image} 占位符替换为输入图 URL；无占位符则尝试写 LoadImage 节点
+        let replaced = false
+        for (const node of Object.values(injected)) {
+          for (const key of Object.keys(node.inputs)) {
+            if (node.inputs[key] === '{image}') {
+              node.inputs[key] = inputImageUrl
+              replaced = true
+            }
+          }
+        }
+        if (!replaced) {
+          const loadImageId = Object.keys(injected).find(
+            (id) => injected[id].class_type === 'LoadImage',
+          )
+          if (loadImageId && injected[loadImageId].inputs) {
+            injected[loadImageId].inputs.image = inputImageUrl
+          }
+        }
+      }
+      return injected
+    }
+    // 无模板：图片用内置文生图模板；视频明确报错
+    if (inputImageUrl) {
+      throw new Error('图生视频需要在 ComfyUI 工作流模板中配置 {image} 占位符或 LoadImage 节点。')
+    }
+    return injectPlaceholders(DEFAULT_TXT2IMG_WORKFLOW, prompt, negativePrompt, seed)
+  }
+
+  async function generateImage(params: TextToImageParams): Promise<Job> {
+    const { baseUrl, workflowTemplateId } = readConfig()
+    ensureWs(baseUrl)
+    const seed = params.seed ?? Math.floor(Math.random() * 1e9)
+    const graph = buildGraph(workflowTemplateId, params.prompt, params.negativePrompt, seed)
+    return submitWorkflow(graph, 'text2image', params.shotRef, seed)
+  }
+
+  async function generateVideo(params: ImageToVideoParams | TextToVideoParams): Promise<Job> {
+    const { baseUrl, videoWorkflowTemplateId } = readConfig()
+    ensureWs(baseUrl)
+    const seed = Math.floor(Math.random() * 1e9)
+    const imageAssetId = 'imageAssetId' in params ? params.imageAssetId : undefined
+    if (imageAssetId) {
+      const inputUrl = await resolveAssetUrl(imageAssetId)
+      if (!inputUrl) {
+        throw new Error('无法解析输入图，请先生成或上传该镜头的首帧图。')
+      }
+      const graph = buildGraph(
+        videoWorkflowTemplateId,
+        params.prompt ?? '',
+        undefined,
+        seed,
+        inputUrl,
+      )
+      return submitWorkflow(graph, 'image2video', params.shotRef, seed)
+    }
+    if (!videoWorkflowTemplateId) {
+      throw new Error(
+        '未配置视频工作流模板：请在「设置 → ComfyUI 媒体」的视频工作流模板中导入并选择文生视频/图生视频工作流。',
+      )
+    }
+    const graph = buildGraph(videoWorkflowTemplateId, params.prompt ?? '', undefined, seed)
+    return submitWorkflow(graph, 'text2video', params.shotRef, seed)
   }
 
   return {
     id: MEDIA_COMFYUI_ID,
     name: 'ComfyUI 媒体',
-    capabilities: ['text2image'],
+    capabilities: ['text2image', 'text2video', 'image2video'],
     generateImage,
     generateVideo,
     getJob: ctrl.getJob,
@@ -406,9 +503,9 @@ export function createMediaComfyUIPlugin(opts?: MediaComfyUIOptions): ProviderPl
     providerType: 'media',
     enabled: true,
     description:
-      '调用本地 ComfyUI 工作流生成图片。可在「设置 → ComfyUI 工作流模板」导入并管理 API 格式模板，选择模板后自动注入提示词与 seed。',
+      '调用本地 ComfyUI 工作流生成图片与视频。可在「设置 → ComfyUI 工作流模板」导入 API 格式模板；「文生图模板」用于图片，「视频工作流模板」用于文生视频/图生视频。',
     capabilities: instance.capabilities,
-    configFields: ['baseUrl', 'workflowTemplateId'],
+    configFields: ['baseUrl', 'workflowTemplateId', 'videoWorkflowTemplateId'],
     instance,
   }
 }

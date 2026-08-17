@@ -9,7 +9,7 @@ export type MediaCapability = 'text2image' | 'text2video' | 'image2video' | 'edi
 /** 能力名集合：保持该名称向后兼容（MediaProviderCapabilities 别名引用） */
 export type ProviderCapabilities = MediaCapability[]
 
-export type ProviderConfigField = 'baseUrl' | 'apiKey' | 'model' | 'workflow' | 'workflowTemplateId'
+export type ProviderConfigField = 'baseUrl' | 'apiKey' | 'model' | 'workflow' | 'workflowTemplateId' | 'videoWorkflowTemplateId' | 'workflowTemplateId'
 
 export interface PluginBase {
   id: string

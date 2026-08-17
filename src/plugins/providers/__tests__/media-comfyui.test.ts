@@ -387,4 +387,68 @@ describe('media-comfyui provider', () => {
     await p.generateImage({ prompt: 'y' })
     expect(FakeWebSocket.instances).toHaveLength(1)
   })
+
+  it('text2video throws a clear error when no video workflow template is configured', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    vi.stubGlobal('fetch', vi.fn(() => jsonResponse({ prompt_id: 'pv1' })))
+    const p = providerWithFakeWs()
+    await expect(p.generateVideo({ prompt: '奔跑的猫' })).rejects.toThrow('视频工作流模板')
+  })
+
+  it('text2video submits the video workflow template', async () => {
+    saveWorkflowTemplate({
+      id: 'vid-tpl',
+      name: '文生视频',
+      graphJson: JSON.stringify({
+        '5': { class_type: 'KSampler', inputs: { seed: '{seed}' } },
+        '6': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      videoWorkflowTemplateId: 'vid-tpl',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pv2' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    const job = await p.generateVideo({ prompt: '奔跑的猫', shotRef: 's1' })
+    expect(job.type).toBe('text2video')
+    expect(job.shotRef).toBe('s1')
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.prompt['6'].inputs.text).toBe('奔跑的猫')
+  })
+
+  it('image2video injects the input image url into the video template', async () => {
+    saveWorkflowTemplate({
+      id: 'i2v-tpl',
+      name: '图生视频',
+      graphJson: JSON.stringify({
+        '1': { class_type: 'LoadImage', inputs: { image: '{image}' } },
+        '5': { class_type: 'KSampler', inputs: { seed: '{seed}' } },
+        '6': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      videoWorkflowTemplateId: 'i2v-tpl',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pv3' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = providerWithFakeWs()
+    const job = await p.generateVideo({ imageAssetId: 'data:image/png;base64,AAAA', prompt: '动起来' })
+    expect(job.type).toBe('image2video')
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.prompt['1'].inputs.image).toBe('data:image/png;base64,AAAA')
+    expect(body.prompt['6'].inputs.text).toBe('动起来')
+  })
 })

@@ -85,6 +85,11 @@ const FIELD_META: Record<
     placeholder: '选择已保存的 ComfyUI 工作流模板',
     templateSelect: true,
   },
+  videoWorkflowTemplateId: {
+    label: '视频工作流模板',
+    placeholder: '选择用于文生视频/图生视频的 ComfyUI 工作流模板',
+    templateSelect: true,
+  },
 }
 
 const fields = computed<ProviderConfigField[]>(() => props.provider.configFields ?? [])
