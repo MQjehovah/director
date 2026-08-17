@@ -46,6 +46,10 @@ class FakeWebSocket {
     this.readyState = FakeWebSocket.CLOSED
     this.onclose?.()
   }
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN
+    this.onopen?.()
+  }
   emit(type: string, data: unknown): void {
     this.onmessage?.({ data: JSON.stringify({ type, data }) })
   }
@@ -284,6 +288,29 @@ describe('media-comfyui provider', () => {
     ws.emit('progress', { value: 10, max: 20 })
     expect((await p.getJob('p10')).progress).toBe(50)
     expect(progressSpy).toHaveBeenCalledWith(50)
+  })
+
+  it('does not clobber websocket progress when the poller ticks', async () => {
+    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/prompt')
+          ? jsonResponse({ prompt_id: 'p12' })
+          : jsonResponse({ p12: { status: { status_str: 'running', completed: false } } }),
+      ),
+    )
+    const p = providerWithFakeWs(1000)
+    await p.generateImage({ prompt: 'x' })
+    const ws = FakeWebSocket.instances[0]
+    ws.open()
+
+    // WS 报告 75%：修复前轮询会在下一 tick 把它重置为 50
+    ws.emit('progress', { value: 15, max: 20 })
+    expect((await p.getJob('p12')).progress).toBe(75)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect((await p.getJob('p12')).progress).toBe(75)
   })
 
   it('falls back to polling when the WebSocket global is unavailable', async () => {

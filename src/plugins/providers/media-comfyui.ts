@@ -218,6 +218,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
   // 仅当恰好一个任务在跑时把进度上报给它；多个任务并发时跳过，交由粗粒度轮询兜底。
   const activePromptIds = new Set<string>()
   let ws: WebSocket | undefined
+  let wsConnected = false
   let wsUnavailable = false
 
   ctrl.onJobUpdate((job) => {
@@ -234,6 +235,9 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     } catch {
       wsUnavailable = true
       return
+    }
+    ws.onopen = () => {
+      wsConnected = true
     }
     ws.onmessage = (event) => {
       let msg: { type?: string; data?: { value?: unknown; max?: unknown } }
@@ -252,10 +256,12 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       if (typeof id === 'string') ctrl.reportProgress(id, pct)
     }
     ws.onerror = () => {
+      wsConnected = false
       ws?.close()
       ws = undefined
     }
     ws.onclose = () => {
+      wsConnected = false
       ws = undefined
     }
   }
@@ -297,7 +303,9 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
         return
       }
       if (!completed || !entry.outputs) {
-        ctrl.patchJob(id, { status: 'running', progress: 50 })
+        // WS 已连接时由 WS 提供实时进度；轮询只确认 running，避免覆盖精细进度
+        if (wsConnected) ctrl.patchJob(id, { status: 'running' })
+        else ctrl.patchJob(id, { status: 'running', progress: 50 })
         return
       }
       const images = Object.values(entry.outputs).flatMap((o) => o.images ?? [])
