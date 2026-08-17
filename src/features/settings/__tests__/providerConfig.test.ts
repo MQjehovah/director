@@ -174,6 +174,37 @@ describe('provider config', () => {
     expect(w.get('[data-test="no-config-fields"]').text()).toContain('无需额外配置')
     expect(w.get('[data-test="provider-toggle"]')).toBeTruthy()
   })
+
+  it('marks the first enabled provider as active and can switch via 设为当前使用', async () => {
+    const registry = new PluginRegistry()
+    registry.register(makeProvider('mock'))
+    registry.register({
+      ...makeProvider('llm-http'),
+      id: 'llm-http',
+      name: 'HTTP LLM',
+      instance: { id: 'llm-http', name: 'HTTP LLM' },
+    })
+    usePluginStore().init(registry)
+    const store = usePluginStore()
+
+    const mockRow = mount(ProviderConfig, { props: { provider: makeProvider('mock') } })
+    const httpRow = mount(ProviderConfig, {
+      props: {
+        provider: {
+          ...makeProvider('llm-http'),
+          id: 'llm-http',
+          name: 'HTTP LLM',
+          instance: { id: 'llm-http', name: 'HTTP LLM' },
+        },
+      },
+    })
+    expect(mockRow.find('[data-test="provider-active"]').exists()).toBe(true)
+    expect(httpRow.find('[data-test="provider-set-active"]').exists()).toBe(true)
+
+    await httpRow.get('[data-test="provider-set-active"]').trigger('click')
+    expect(store.activeProviders.media).toBe('llm-http')
+    expect(store.mediaProvider?.id).toBe('llm-http')
+  })
 })
 
 describe('settings panel', () => {

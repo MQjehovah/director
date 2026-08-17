@@ -4,6 +4,8 @@ export type { MediaMockOptions, MediaMockProvider } from './media-mock'
 export { createLLMMockProvider, createLLMMockPlugin } from './llm-mock'
 export type { LLMMockOptions, LLMMockProvider } from './llm-mock'
 
+export { createLLMHttpProvider, createLLMHttpPlugin, LLM_HTTP_ID } from './llm-http'
+
 export { createTTSSyncMock, createTTSSyncPlugin } from './tts-mock'
 export type { TTSSyncMockOptions, TTSSyncMock } from './tts-mock'
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Badge, Input, Switch } from '../../components/ui'
+import { Badge, Button, Input, Switch } from '../../components/ui'
 import { usePluginStore } from '../../stores/pluginStore'
 import type { ProviderConfigField, ProviderPlugin } from '../../core/plugin/types'
 import { loadProviderConfig, saveProviderConfig } from './httpBackendConfig'
@@ -68,6 +68,19 @@ const fields = computed<ProviderConfigField[]>(() => props.provider.configFields
 function fieldTestKey(field: ProviderConfigField): string {
   return `config-${field.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`
 }
+
+// 与 pluginStore.resolveInstance 的回退逻辑一致：
+// 显式选择 > 同类型第一个启用插件
+const isActive = computed<boolean>(() => {
+  if (!store.isEnabled(props.provider.id)) return false
+  const selected = store.activeProviders[props.provider.providerType]
+  if (selected) return selected === props.provider.id
+  return store.enabledProviders(props.provider.providerType)[0]?.id === props.provider.id
+})
+
+function setActive(): void {
+  store.setActiveProvider(props.provider.providerType, props.provider.id)
+}
 </script>
 
 <template>
@@ -82,12 +95,24 @@ function fieldTestKey(field: ProviderConfigField): string {
           {{ provider.description }}
         </p>
       </div>
-      <Switch
-        :model-value="store.isEnabled(provider.id)"
-        label="启用"
-        data-test="provider-toggle"
-        @update:model-value="onToggle"
-      />
+      <div class="flex shrink-0 items-center gap-2">
+        <Badge v-if="isActive" variant="success" data-test="provider-active">当前使用</Badge>
+        <Button
+          v-if="!isActive && store.isEnabled(provider.id)"
+          variant="outline"
+          size="sm"
+          data-test="provider-set-active"
+          @click="setActive"
+        >
+          设为当前使用
+        </Button>
+        <Switch
+          :model-value="store.isEnabled(provider.id)"
+          label="启用"
+          data-test="provider-toggle"
+          @update:model-value="onToggle"
+        />
+      </div>
     </div>
 
     <div v-if="fields.length > 0" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">

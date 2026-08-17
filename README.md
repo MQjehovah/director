@@ -88,8 +88,8 @@ export function createLLMHttpPlugin(): ProviderPlugin<LLMProvider> {
 | 对接方式 | Provider | 说明 |
 |----------|----------|------|
 | 无后端（默认） | mock | 本地假实现，延迟模拟 + 占位图，便于开发与演示 |
-| 真实 REST 后端 | `media-http` / `llm-http`（预留） | 在设置页配置 baseUrl / token / model |
-| OpenAI 兼容协议 | `llm-http` | `/chat/completions` 流式接口 |
+| OpenAI 兼容协议 | `llm-http` | 已内置：设置页填写地址（如 `https://api.deepseek.com/v1`）、密钥、模型名后「设为当前使用」即可；浏览器直连受 CORS 限制时需配代理 |
+| 真实 REST 后端 | `media-http`（预留） | 在设置页配置 baseUrl / token / model，按 `llm-http` 模式实现 |
 | 本地 ComfyUI | `media-comfyui`（预留） | 直连 `/prompt` + `/history`，工作流 JSON 模板 |
 | 本地模型 | 同上述 Provider | 通过本地服务地址接入 |
 
