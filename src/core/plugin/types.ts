@@ -9,6 +9,8 @@ export interface ProviderCapabilities {
   upscale: boolean
 }
 
+export type ProviderConfigField = 'baseUrl' | 'apiKey' | 'model'
+
 export interface PluginBase {
   id: string
   name: string
@@ -22,6 +24,7 @@ export interface ProviderPlugin<T = unknown> extends PluginBase {
   kind: 'provider'
   providerType: ProviderType
   capabilities?: ProviderCapabilities
+  configFields?: ProviderConfigField[]
   instance?: T
 }
 

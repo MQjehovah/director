@@ -22,7 +22,14 @@ import {
 const STORAGE_PREFIX = 'ai-director:provider:'
 
 function makeProvider(id = 'mock'): ProviderPlugin {
-  return { id, name: 'Mock 媒体', kind: 'provider', providerType: 'media', enabled: true }
+  return {
+    id,
+    name: 'Mock 媒体',
+    kind: 'provider',
+    providerType: 'media',
+    enabled: true,
+    configFields: ['baseUrl', 'apiKey', 'model'],
+  }
 }
 
 function initStore(provider: ProviderPlugin): void {
@@ -144,6 +151,28 @@ describe('provider config', () => {
       apiKey: 'sk-test',
       model: 'flux',
     })
+  })
+
+  it('renders only the declared config fields', async () => {
+    const provider: ProviderPlugin = {
+      ...makeProvider(),
+      configFields: ['baseUrl'],
+    }
+    initStore(provider)
+    const w = mount(ProviderConfig, { props: { provider } })
+    expect(w.find('[data-test="config-base-url"]').exists()).toBe(true)
+    expect(w.find('[data-test="config-api-key"]').exists()).toBe(false)
+    expect(w.find('[data-test="config-model"]').exists()).toBe(false)
+  })
+
+  it('hides config fields for providers without configFields (e.g. IndexedDB storage)', async () => {
+    initStore(createStorageIndexedDBPlugin())
+    const w = mount(ProviderConfig, { props: { provider: createStorageIndexedDBPlugin() } })
+    expect(w.find('[data-test="config-base-url"]').exists()).toBe(false)
+    expect(w.find('[data-test="config-api-key"]').exists()).toBe(false)
+    expect(w.find('[data-test="config-model"]').exists()).toBe(false)
+    expect(w.get('[data-test="no-config-fields"]').text()).toContain('无需额外配置')
+    expect(w.get('[data-test="provider-toggle"]')).toBeTruthy()
   })
 })
 

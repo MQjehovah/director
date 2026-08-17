@@ -2,7 +2,7 @@
 import { computed, reactive, watch } from 'vue'
 import { Badge, Input, Switch } from '../../components/ui'
 import { usePluginStore } from '../../stores/pluginStore'
-import type { ProviderPlugin } from '../../core/plugin/types'
+import type { ProviderConfigField, ProviderPlugin } from '../../core/plugin/types'
 import { loadProviderConfig, saveProviderConfig } from './httpBackendConfig'
 import type { ProviderConfig } from './httpBackendConfig'
 
@@ -53,6 +53,21 @@ const typeVariant = computed<'neutral' | 'success' | 'warning' | 'danger' | 'inf
       return 'neutral'
   }
 })
+
+const FIELD_META: Record<
+  ProviderConfigField,
+  { label: string; placeholder: string; type?: 'text' | 'password' }
+> = {
+  baseUrl: { label: '地址 Base URL', placeholder: 'http://localhost:8000' },
+  apiKey: { label: 'Token / 密钥', placeholder: 'sk-...', type: 'password' },
+  model: { label: '模型名', placeholder: 'model-name' },
+}
+
+const fields = computed<ProviderConfigField[]>(() => props.provider.configFields ?? [])
+
+function fieldTestKey(field: ProviderConfigField): string {
+  return `config-${field.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`
+}
 </script>
 
 <template>
@@ -75,24 +90,20 @@ const typeVariant = computed<'neutral' | 'success' | 'warning' | 'danger' | 'inf
       />
     </div>
 
-    <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <label class="block">
-        <span class="mb-1 block text-xs text-ink-muted">地址 Base URL</span>
-        <Input v-model="config.baseUrl" placeholder="http://localhost:8000" data-test="config-base-url" />
-      </label>
-      <label class="block">
-        <span class="mb-1 block text-xs text-ink-muted">Token / 密钥</span>
+    <div v-if="fields.length > 0" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <label v-for="field in fields" :key="field" class="block">
+        <span class="mb-1 block text-xs text-ink-muted">{{ FIELD_META[field].label }}</span>
         <Input
-          v-model="config.apiKey"
-          type="password"
-          placeholder="sk-..."
-          data-test="config-api-key"
+          :model-value="String(config[field] ?? '')"
+          :type="FIELD_META[field].type ?? 'text'"
+          :placeholder="FIELD_META[field].placeholder"
+          :data-test="fieldTestKey(field)"
+          @update:model-value="config[field] = $event"
         />
       </label>
-      <label class="block">
-        <span class="mb-1 block text-xs text-ink-muted">模型名</span>
-        <Input v-model="config.model" placeholder="model-name" data-test="config-model" />
-      </label>
     </div>
+    <p v-else class="mt-3 text-xs text-ink-muted" data-test="no-config-fields">
+      该插件无需额外配置。
+    </p>
   </div>
 </template>
