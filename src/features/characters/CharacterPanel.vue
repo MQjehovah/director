@@ -27,6 +27,6 @@ function closeEditor(): void {
     <div class="min-w-0 flex-1 overflow-y-auto">
       <CharacterGrid @select="openEditor" @add="addNew" />
     </div>
-    <CharacterEditor v-if="selectedId" :character-id="selectedId" @close="closeEditor" />
+    <CharacterEditor v-if="selectedId" :key="selectedId" :character-id="selectedId" @close="closeEditor" />
   </div>
 </template>

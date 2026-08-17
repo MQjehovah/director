@@ -53,6 +53,18 @@ function setLoraWeight(value: string): void {
   })
 }
 
+function onImagePromptChange(value: string): void {
+  imagePrompt.value = value
+  if (!character.value) return
+  const prompt = value.trim()
+  store.updateCharacter(character.value.id, {
+    metadata: {
+      ...(character.value.metadata ?? {}),
+      ...(prompt ? { imagePrompt: prompt } : { imagePrompt: undefined }),
+    },
+  })
+}
+
 function isImageSrc(value: string): boolean {
   return value.startsWith('data:') || value.startsWith('http') || value.startsWith('/')
 }
@@ -231,10 +243,11 @@ async function onGeneratePortrait(): Promise<void> {
         </div>
 
         <Textarea
-          v-model="imagePrompt"
+          :model-value="imagePrompt"
           :rows="3"
           placeholder="参考图提示词（可编辑）"
           data-test="image-prompt"
+          @update:model-value="onImagePromptChange"
         />
         <div class="flex gap-2">
           <Button

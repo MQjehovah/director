@@ -52,17 +52,22 @@ export function useCharacterFeatures() {
       result: providerJob.result,
     })
 
-    media.onJobUpdate((updated) => {
+    const off = media.onJobUpdate((updated) => {
       if (updated.id !== job.id) return
       jobStore.updateJob(updated)
       if (updated.status === 'done') {
         const assetIds = updated.result?.assetIds ?? []
-        if (assetIds.length === 0) return
-        const current = characterStore.getCharacter(characterId)
-        if (!current) return
-        characterStore.updateCharacter(characterId, {
-          referenceImages: [...current.referenceImages, ...assetIds],
-        })
+        if (assetIds.length > 0) {
+          const current = characterStore.getCharacter(characterId)
+          if (current) {
+            characterStore.updateCharacter(characterId, {
+              referenceImages: [...current.referenceImages, ...assetIds],
+            })
+          }
+        }
+        off()
+      } else if (updated.status === 'failed' || updated.status === 'canceled') {
+        off()
       }
     })
 
