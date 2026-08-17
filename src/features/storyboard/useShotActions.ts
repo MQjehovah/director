@@ -39,6 +39,46 @@ function capabilityForShot(shot: Shot | undefined): MediaCapability {
   return imageInputFor(shot) ? 'image2video' : 'text2video'
 }
 
+const SHOT_SIZE_LABELS: Record<string, string> = {
+  'close-up': '特写',
+  medium: '中景',
+  wide: '全景',
+}
+
+const ANGLE_LABELS: Record<string, string> = {
+  'eye-level': '平视',
+  high: '俯视',
+  low: '仰视',
+  dutch: '倾斜',
+}
+
+const MOVE_LABELS: Record<string, string> = {
+  static: '固定机位',
+  pan: '横摇',
+  tilt: '俯仰',
+  'zoom-in': '推近',
+  'zoom-out': '拉远',
+  tracking: '跟拍',
+}
+
+/** 组装镜头提示词：用户画面描述 + 镜头语言（景别/机位/运镜/时长） */
+export function buildShotPrompt(shot: Shot): string {
+  const base = shot.prompt?.trim() ?? ''
+  const camera = shot.camera
+  if (!camera) return base
+  const parts: string[] = []
+  if (base) parts.push(base)
+  const size = SHOT_SIZE_LABELS[camera.shotSize]
+  const angle = ANGLE_LABELS[camera.angle]
+  const move = MOVE_LABELS[camera.move]
+  const language = [size, angle, move].filter(Boolean).join('，')
+  if (language) parts.push(language)
+  if (shot.shotType === 'video' && camera.duration > 0) {
+    parts.push(`时长约 ${camera.duration} 秒`)
+  }
+  return parts.join('，')
+}
+
 export function useShotActions() {
   const storyboardStore = useStoryboardStore()
   const jobStore = useJobStore()
@@ -64,7 +104,7 @@ export function useShotActions() {
     )
     if (!media) return undefined
 
-    const prompt = shot.prompt?.trim() ?? ''
+    const prompt = buildShotPrompt(shot)
     let providerJob: Job
     try {
       if (shot.shotType === 'video') {

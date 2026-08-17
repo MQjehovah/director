@@ -1,4 +1,4 @@
-import { flushPromises, mount, DOMWrapper } from '@vue/test-utils'
+﻿import { flushPromises, mount, DOMWrapper } from '@vue/test-utils'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import ShotGrid from '../ShotGrid.vue'
@@ -9,7 +9,7 @@ import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { useScriptStore } from '../../../stores/scriptStore'
 import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
-import { useShotActions } from '../useShotActions'
+import { useShotActions, buildShotPrompt } from '../useShotActions'
 import { JobSchema } from '../../../core/models'
 import type { MediaCapability } from '../../../core'
 import { PluginRegistry } from '../../../core'
@@ -96,7 +96,7 @@ describe('shot grid', () => {
 
   it('emits select with the shot id when a card is clicked', async () => {
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '第一个' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '第一个' })
     const w = mount(ShotGrid)
     await w.get('[data-test="shot-select"]').trigger('click')
     expect(w.emitted('select')?.[0]?.[0]).toBe(shot.id)
@@ -104,8 +104,8 @@ describe('shot grid', () => {
 
   it('reorders shots via move buttons', async () => {
     const store = useStoryboardStore()
-    store.addShot({ shotType: 'image', prompt: '第一个' })
-    store.addShot({ shotType: 'image', prompt: '第二个' })
+    store.addShot({ shotType: 'image' as const, prompt: '第一个' })
+    store.addShot({ shotType: 'image' as const, prompt: '第二个' })
     const w = mount(ShotGrid)
     const firstCard = w.findAll('[data-test="shot-card"]')[0]
     await firstCard.get('[data-test="shot-move-down"]').trigger('click')
@@ -120,7 +120,7 @@ describe('shot editor', () => {
 
   it('updates camera fields and prompt', async () => {
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '初始' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '初始' })
     const w = mount(ShotEditor, { props: { shotId: shot.id } })
     await w.get('[data-test="shot-size"]').setValue('close-up')
     await w.get('[data-test="angle"]').setValue('low')
@@ -152,7 +152,7 @@ describe('shot editor', () => {
     initMedia()
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     const w = mount(ShotEditor, { props: { shotId: shot.id } })
     await w.get('[data-test="gen-media"]').trigger('click')
     await flushPromises()
@@ -164,7 +164,7 @@ describe('shot editor', () => {
 
   it('shows a message when the media provider is missing', async () => {
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     const w = mount(ShotEditor, { props: { shotId: shot.id } })
     await w.get('[data-test="gen-media"]').trigger('click')
     await flushPromises()
@@ -203,7 +203,7 @@ describe('storyboard panel', () => {
 
   it('renders the shot grid and opens the editor on selection', async () => {
     const store = useStoryboardStore()
-    store.addShot({ shotType: 'image', prompt: '测试镜头' })
+    store.addShot({ shotType: 'image' as const, prompt: '测试镜头' })
     const w = mount(StoryboardPanel)
     expect(w.get('[data-test="shot-card"]')).toBeTruthy()
     await w.get('[data-test="shot-select"]').trigger('click')
@@ -262,7 +262,7 @@ describe('useShotActions', () => {
     initMedia()
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job).toBeDefined()
     expect(jobs.jobs).toHaveLength(1)
@@ -276,7 +276,7 @@ describe('useShotActions', () => {
   it('generateMedia returns undefined when the media provider is missing', async () => {
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job).toBeUndefined()
     expect(jobs.jobs).toHaveLength(0)
@@ -292,7 +292,7 @@ describe('useShotActions', () => {
   it('generateMedia uses image2video for a video shot with an existing image asset', async () => {
     initMedia()
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'video', prompt: '让画面动起来' })
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '让画面动起来' })
     store.updateShot(shot.id, { mediaAssets: ['data:image/svg+xml;utf8,FAKE'] })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job?.type).toBe('image2video')
@@ -301,7 +301,7 @@ describe('useShotActions', () => {
   it('generateMedia uses text2video for a video shot without an image asset', async () => {
     initMedia()
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'video', prompt: '直接生成视频' })
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '直接生成视频' })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job?.type).toBe('text2video')
   })
@@ -312,7 +312,7 @@ describe('useShotActions', () => {
     registerCapabilityProvider(registry, { id: 'vid', caps: ['text2video'], jobType: 'text2video' })
     usePluginStore().init(registry)
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job?.type).toBe('text2image')
     expect(job?.pluginId).toBe('img')
@@ -324,7 +324,7 @@ describe('useShotActions', () => {
     registerCapabilityProvider(registry, { id: 'vid', caps: ['text2video'], jobType: 'text2video' })
     usePluginStore().init(registry)
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'video', prompt: '让画面动起来' })
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '让画面动起来' })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job?.type).toBe('text2video')
     expect(job?.pluginId).toBe('vid')
@@ -336,7 +336,7 @@ describe('useShotActions', () => {
     usePluginStore().init(registry)
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'video', prompt: '动起来' })
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '动起来' })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job).toBeUndefined()
     expect(jobs.jobs).toHaveLength(0)
@@ -381,7 +381,7 @@ describe('useShotActions', () => {
     usePluginStore().init(registry)
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     await useShotActions().generateMedia(shot.id)
     const created = jobs.jobs[0]
     expect(created?.pluginId).toBe('media-a')
@@ -431,7 +431,7 @@ describe('useShotActions', () => {
     usePluginStore().init(registry)
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '同步完成' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '同步完成' })
     await useShotActions().generateMedia(shot.id)
     expect(jobs.getJob('sync-job')?.status).toBe('done')
     expect(store.shotById(shot.id)?.mediaAssets).toContain('sync-asset')
@@ -441,7 +441,7 @@ describe('useShotActions', () => {
     initMedia()
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     const first = await useShotActions().generateMedia(shot.id)
     const second = await useShotActions().generateMedia(shot.id)
     expect(second?.id).toBe(first?.id)
@@ -452,7 +452,7 @@ describe('useShotActions', () => {
     initMedia()
     const store = useStoryboardStore()
     const jobs = useJobStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     await useShotActions().generateMedia(shot.id)
     expect(jobs.jobs[0].status).toBe('running')
     await useShotActions().cancelGeneration(shot.id)
@@ -462,7 +462,7 @@ describe('useShotActions', () => {
   it('regenerate clears existing assets and creates a new job', async () => {
     initMedia()
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const shot = store.addShot({ shotType: 'image' as const, prompt: '一只黑猫' })
     const actions = useShotActions()
     await actions.generateMedia(shot.id)
     await wait(100)
@@ -470,5 +470,36 @@ describe('useShotActions', () => {
     const job = await actions.regenerate(shot.id)
     expect(job).toBeDefined()
     expect(store.shotById(shot.id)?.mediaAssets).toHaveLength(0)
+  })
+})
+
+describe('buildShotPrompt', () => {
+  it('assembles camera language into the shot prompt', () => {
+    const shot = {
+      id: 's1',
+      shotType: 'image' as const,
+      prompt: '夕阳下的少年',
+      metadata: {},
+      mediaAssets: [],
+      camera: { shotSize: 'close-up' as const, angle: 'low' as const, move: 'zoom-in' as const, duration: 5 },
+    }
+    expect(buildShotPrompt(shot)).toBe('夕阳下的少年，特写，仰视，推近')
+  })
+
+  it('appends duration for video shots', () => {
+    const shot = {
+      id: 's1',
+      shotType: 'video' as const,
+      prompt: '奔跑的猫',
+      metadata: {},
+      mediaAssets: [],
+      camera: { shotSize: 'wide' as const, angle: 'eye-level' as const, move: 'tracking' as const, duration: 8 },
+    }
+    expect(buildShotPrompt(shot)).toBe('奔跑的猫，全景，平视，跟拍，时长约 8 秒')
+  })
+
+  it('returns the base prompt when there is no camera', () => {
+    const shot = { id: 's1', shotType: 'image' as const, prompt: '一只黑猫', metadata: {}, mediaAssets: [] }
+    expect(buildShotPrompt(shot)).toBe('一只黑猫')
   })
 })
