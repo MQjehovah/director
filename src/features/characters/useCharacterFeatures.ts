@@ -18,15 +18,23 @@ export function useCharacterFeatures() {
   async function generateCharacterDescription(seedIdea: string): Promise<LlmFeatureResult> {
     const llm = pluginStore.llmProvider
     if (!llm) return { ok: false, error: '未配置 LLM Provider，无法生成角色设定。' }
-    const text = await llm.complete(CHARACTER_DESCRIPTION_PROMPT + seedIdea)
-    return { ok: true, text }
+    try {
+      const text = await llm.complete(CHARACTER_DESCRIPTION_PROMPT + seedIdea)
+      return { ok: true, text }
+    } catch (err) {
+      return { ok: false, error: `角色设定生成失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   }
 
   async function expandReferencePrompt(description: string): Promise<LlmFeatureResult> {
     const llm = pluginStore.llmProvider
     if (!llm) return { ok: false, error: '未配置 LLM Provider，无法扩写参考图提示词。' }
-    const text = await llm.complete(REFERENCE_PROMPT_EXPANDER + description)
-    return { ok: true, text }
+    try {
+      const text = await llm.complete(REFERENCE_PROMPT_EXPANDER + description)
+      return { ok: true, text }
+    } catch (err) {
+      return { ok: false, error: `提示词扩写失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   }
 
   async function generatePortrait(characterId: string): Promise<Job | undefined> {
@@ -40,7 +48,12 @@ export function useCharacterFeatures() {
         ? storedPrompt
         : (character.appearance?.trim() || character.name)
 
-    const providerJob = await media.generateImage({ prompt, shotRef: undefined })
+    let providerJob: Job
+    try {
+      providerJob = await media.generateImage({ prompt, shotRef: undefined })
+    } catch (err) {
+      throw new Error(`立绘生成失败：${err instanceof Error ? err.message : String(err)}`)
+    }
     const job = jobStore.addJob({
       id: providerJob.id,
       type: providerJob.type,

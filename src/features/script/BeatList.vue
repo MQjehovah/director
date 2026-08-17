@@ -74,17 +74,21 @@ function setAction(beatId: string, action: string): void {
 }
 
 function parseRewritten(text: string): { type: Beat['type']; dialogue?: { speaker: string; text: string }; action?: string } | null {
-  const firstLine = text.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0)
-  if (!firstLine) return null
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0)
+  if (lines.length === 0) return null
+  const firstLine = lines[0]
   if (firstLine.startsWith('动作') && firstLine.length > 2 && (firstLine[2] === '：' || firstLine[2] === ':')) {
-    return { type: 'action', action: firstLine.replace(/^动作[：:]\s*/, '') }
+    return { type: 'action', action: lines.map((l) => l.replace(/^动作[：:]\s*/, '')).join('\n') }
   }
   if (firstLine.startsWith('音效') && firstLine.length > 2 && (firstLine[2] === '：' || firstLine[2] === ':')) {
-    return { type: 'sfx', action: firstLine.replace(/^音效[：:]\s*/, '') }
+    return { type: 'sfx', action: lines.map((l) => l.replace(/^音效[：:]\s*/, '')).join('\n') }
   }
   const dialogue = firstLine.match(/^(.+?)[：:]\s*(.+)$/)
-  if (dialogue) return { type: 'dialogue', dialogue: { speaker: dialogue[1], text: dialogue[2] } }
-  return { type: 'action', action: firstLine }
+  if (dialogue) {
+    const text = lines.map((l) => l.replace(/^(.+?)[：:]\s*/, '')).join('\n')
+    return { type: 'dialogue', dialogue: { speaker: dialogue[1], text } }
+  }
+  return { type: 'action', action: lines.join('\n') }
 }
 
 async function onRewrite(beat: Beat): Promise<void> {

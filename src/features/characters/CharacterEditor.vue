@@ -118,6 +118,8 @@ async function onGeneratePortrait(): Promise<void> {
   try {
     const job = await features.generatePortrait(c.id)
     message.value = job ? `立绘生成任务已创建（${job.id}）。` : '未配置媒体 Provider，无法生成立绘。'
+  } catch (err) {
+    message.value = err instanceof Error ? err.message : String(err)
   } finally {
     busy.value = false
   }

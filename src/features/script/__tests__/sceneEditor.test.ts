@@ -86,6 +86,49 @@ describe('beat list', () => {
     await flushPromises()
     expect(w.get('[data-test="message"]').text()).toContain('未配置')
   })
+
+  it('clearing the speaker does not crash', async () => {
+    const store = useScriptStore()
+    const scene = store.addScene({ title: '开场' })
+    store.addBeat(scene.id, { type: 'dialogue', dialogue: { speaker: '小明', text: '你好' } })
+    const w = mount(BeatList, { props: { sceneId: scene.id } })
+    await w.get('[data-test="beat-speaker"]').setValue('')
+    expect(store.scenes[0].beats[0].dialogue?.speaker).toBe('')
+  })
+
+  it('AI 改写 parses multi-line rewrite output into dialogue text', async () => {
+    setActivePinia(createPinia())
+    const registry = new PluginRegistry()
+    registry.register({
+      id: 'llm-multiline',
+      name: 'Multiline LLM',
+      kind: 'provider',
+      providerType: 'llm',
+      enabled: true,
+      instance: {
+        id: 'llm-multiline',
+        name: 'Multiline LLM',
+        models: [],
+        chat: async function* () {
+          yield '小明：你给我站住！\n小红：凭什么？'
+        },
+        complete: async () => '小明：你给我站住！\n小红：凭什么？',
+      },
+    })
+    usePluginStore().init(registry)
+    const store = useScriptStore()
+    const scene = store.addScene({ title: '开场' })
+    store.addBeat(scene.id, { type: 'dialogue', dialogue: { speaker: '小明', text: '你好' } })
+    const w = mount(BeatList, { props: { sceneId: scene.id } })
+    await w.get('[data-test="rewrite-instruction"]').setValue('更有气势')
+    await w.get('[data-test="beat-rewrite"]').trigger('click')
+    await flushPromises()
+    const beat = store.scenes[0].beats[0]
+    expect(beat.type).toBe('dialogue')
+    expect(beat.dialogue?.speaker).toBe('小明')
+    expect(beat.dialogue?.text).toContain('你给我站住')
+    expect(beat.dialogue?.text).toContain('凭什么')
+  })
 })
 
 describe('scene editor', () => {

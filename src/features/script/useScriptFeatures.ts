@@ -39,8 +39,12 @@ export function useScriptFeatures() {
   async function generateScriptFromIdea(idea: string): Promise<LlmFeatureResult> {
     const llm = pluginStore.llmProvider
     if (!llm) return { ok: false, error: '未配置 LLM Provider，无法生成剧本。' }
-    const text = await llm.complete(`${SCRIPT_GENERATION_PROMPT}${characterContext()}灵感：${idea}`)
-    return { ok: true, text }
+    try {
+      const text = await llm.complete(`${SCRIPT_GENERATION_PROMPT}${characterContext()}灵感：${idea}`)
+      return { ok: true, text }
+    } catch (err) {
+      return { ok: false, error: `剧本生成失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   }
 
   async function rewriteBeat(sceneId: string, beatId: string, instruction: string): Promise<LlmFeatureResult> {
@@ -48,8 +52,12 @@ export function useScriptFeatures() {
     if (!llm) return { ok: false, error: '未配置 LLM Provider，无法改写节拍。' }
     const beatText = serializeBeat(sceneId, beatId)
     if (!beatText) return { ok: false, error: '节拍不存在。' }
-    const text = await llm.complete(`${BEAT_REWRITE_PROMPT}${beatText}\n改写指令：${instruction}`)
-    return { ok: true, text }
+    try {
+      const text = await llm.complete(`${BEAT_REWRITE_PROMPT}${beatText}\n改写指令：${instruction}`)
+      return { ok: true, text }
+    } catch (err) {
+      return { ok: false, error: `节拍改写失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   }
 
   function cutSceneToShots(sceneId: string): Shot[] {

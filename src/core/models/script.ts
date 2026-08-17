@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const BeatTypeSchema = z.enum(['shot', 'dialogue', 'action', 'sfx'])
 
 export const DialogueSchema = z.object({
-  speaker: z.string().min(1),
+  speaker: z.string(),
   text: z.string(),
 })
 
