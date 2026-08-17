@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import ShotGrid from '../ShotGrid.vue'
 import ShotEditor from '../ShotEditor.vue'
@@ -9,7 +9,10 @@ import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useShotActions } from '../useShotActions'
+import { JobSchema } from '../../../core/models'
+import type { MediaCapability } from '../../../core'
 import { PluginRegistry } from '../../../core'
+import { createJobController } from '../../../providers/capabilities'
 import { createMediaMockPlugin } from '../../../plugins/providers'
 
 function initMedia(delayMs = 30): void {
@@ -20,6 +23,56 @@ function initMedia(delayMs = 30): void {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 注册只具备指定能力的媒体 Provider（生成方法按能力裁剪，任务生命周期完整） */
+function registerCapabilityProvider(
+  registry: PluginRegistry,
+  opts: { id: string; caps: MediaCapability[]; jobType: string },
+): void {
+  const ctrl = createJobController({ pollIntervalMs: 5 })
+  const { id, caps, jobType } = opts
+  let seq = 0
+  const instance: Record<string, unknown> = {
+    id,
+    name: id,
+    capabilities: caps,
+    getJob: ctrl.getJob,
+    onJobUpdate: ctrl.onJobUpdate,
+    cancelJob: ctrl.cancelJob,
+  }
+  const createJob = (shotRef?: string) =>
+    JobSchema.parse({
+      id: `${id}-job-${(seq += 1)}`,
+      type: jobType,
+      status: 'running',
+      progress: 5,
+      pluginId: id,
+      shotRef,
+    })
+  if (caps.includes('text2image')) {
+    instance.generateImage = async (p: { shotRef?: string }) => {
+      const job = createJob(p.shotRef)
+      ctrl.setJob(job)
+      return job
+    }
+  }
+  if (caps.includes('text2video') || caps.includes('image2video')) {
+    instance.generateVideo = async (p: { shotRef?: string }) => {
+      const job = createJob(p.shotRef)
+      ctrl.setJob(job)
+      return job
+    }
+  }
+  registry.register({
+    id,
+    name: id,
+    kind: 'provider',
+    providerType: 'media',
+    enabled: true,
+    capabilities: caps,
+    instance,
+  })
 }
 
 describe('shot grid', () => {
@@ -216,6 +269,93 @@ describe('useShotActions', () => {
     const shot = store.addShot({ shotType: 'video', prompt: '直接生成视频' })
     const job = await useShotActions().generateMedia(shot.id)
     expect(job?.type).toBe('text2video')
+  })
+
+  it('generateMedia resolves by capability: image shot uses the text2image provider', async () => {
+    const registry = new PluginRegistry()
+    registerCapabilityProvider(registry, { id: 'img', caps: ['text2image'], jobType: 'text2image' })
+    registerCapabilityProvider(registry, { id: 'vid', caps: ['text2video'], jobType: 'text2video' })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('text2image')
+    expect(job?.pluginId).toBe('img')
+  })
+
+  it('generateMedia resolves by capability: video shot uses the text2video provider', async () => {
+    const registry = new PluginRegistry()
+    registerCapabilityProvider(registry, { id: 'img', caps: ['text2image'], jobType: 'text2image' })
+    registerCapabilityProvider(registry, { id: 'vid', caps: ['text2video'], jobType: 'text2video' })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video', prompt: '让画面动起来' })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('text2video')
+    expect(job?.pluginId).toBe('vid')
+  })
+
+  it('generateMedia fails gracefully for a video shot when no provider has a video capability', async () => {
+    const registry = new PluginRegistry()
+    registerCapabilityProvider(registry, { id: 'img', caps: ['text2image'], jobType: 'text2image' })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = store.addShot({ shotType: 'video', prompt: '动起来' })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job).toBeUndefined()
+    expect(jobs.jobs).toHaveLength(0)
+  })
+
+  it('cancelGeneration targets the owning pluginId even after the active provider switches', async () => {
+    setActivePinia(createPinia())
+    const registry = new PluginRegistry()
+    const ctrlA = createJobController({ pollIntervalMs: 5 })
+    let seq = 0
+    const instanceA = {
+      id: 'media-a',
+      name: 'Media A',
+      capabilities: ['text2image'] as MediaCapability[],
+      async generateImage(p: { shotRef?: string }) {
+        const job = JobSchema.parse({
+          id: `a-job-${(seq += 1)}`,
+          type: 'text2image',
+          status: 'running',
+          progress: 5,
+          pluginId: 'media-a',
+          shotRef: p.shotRef,
+        })
+        ctrlA.setJob(job)
+        return job
+      },
+      getJob: ctrlA.getJob,
+      onJobUpdate: ctrlA.onJobUpdate,
+      cancelJob: ctrlA.cancelJob,
+    }
+    const cancelSpy = vi.spyOn(instanceA, 'cancelJob')
+    registry.register({
+      id: 'media-a',
+      name: 'Media A',
+      kind: 'provider',
+      providerType: 'media',
+      enabled: true,
+      capabilities: ['text2image'],
+      instance: instanceA,
+    })
+    registerCapabilityProvider(registry, { id: 'media-b', caps: ['text2image'], jobType: 'text2image' })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = store.addShot({ shotType: 'image', prompt: '一只黑猫' })
+    await useShotActions().generateMedia(shot.id)
+    const created = jobs.jobs[0]
+    expect(created?.pluginId).toBe('media-a')
+    // 切换到另一个同样具备 text2image 的 Provider；取消仍应命中创建任务的 media-a
+    const pluginStore = usePluginStore()
+    pluginStore.setActiveProvider('media', 'media-b')
+    await useShotActions().cancelGeneration(shot.id)
+    expect(jobs.getJob(created?.id ?? '')?.status).toBe('canceled')
+    expect(cancelSpy).toHaveBeenCalledWith(created?.id)
   })
 
   it('reconciles a provider that completes synchronously into the job store', async () => {

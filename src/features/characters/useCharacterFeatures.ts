@@ -3,6 +3,7 @@ import { useJobStore } from '../../stores/jobStore'
 import { usePluginStore } from '../../stores/pluginStore'
 import type { Job } from '../../core/models'
 import type { LlmFeatureResult } from '../shared/llmResult'
+import type { MediaCapabilityProvider } from '../../providers/capabilities'
 
 export const CHARACTER_DESCRIPTION_PROMPT =
   '你是一位动画导演。请根据下面的灵感，生成一份结构化的角色设定卡片（使用中文），内容包含：外貌、性格、背景。请分条列出。\n\n灵感：'
@@ -38,7 +39,10 @@ export function useCharacterFeatures() {
   }
 
   async function generatePortrait(characterId: string): Promise<Job | undefined> {
-    const media = pluginStore.mediaProvider
+    const media = pluginStore.resolveInstanceCapability<MediaCapabilityProvider>(
+      'media',
+      'text2image',
+    )
     const character = characterStore.getCharacter(characterId)
     if (!media || !character) return undefined
 

@@ -2,7 +2,9 @@ import { ref } from 'vue'
 import { usePluginStore } from '../../stores/pluginStore'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useJobStore } from '../../stores/jobStore'
-import type { Asset, Job } from '../../core/models'
+import type { Asset, Job, Shot } from '../../core/models'
+import type { MediaCapability } from '../../core/plugin/types'
+import type { MediaCapabilityProvider } from '../../providers/capabilities'
 import type { MediaProvider } from '../../providers/MediaProvider'
 
 type AssetResolvingMediaProvider = MediaProvider & {
@@ -14,6 +16,12 @@ const resolving = new Set<string>()
 
 function isImageSrc(value: string): boolean {
   return value.startsWith('data:') || value.startsWith('http') || value.startsWith('/')
+}
+
+/** 按镜头需求选择能力：image → text2image；video → image2video（有图）或 text2video */
+function capabilityForShot(shot: Shot | undefined): MediaCapability {
+  if (!shot || shot.shotType !== 'video') return 'text2image'
+  return shot.mediaAssets.length > 0 ? 'image2video' : 'text2video'
 }
 
 export function useShotActions() {
@@ -29,12 +37,17 @@ export function useShotActions() {
   }
 
   async function generateMedia(shotId: string): Promise<Job | undefined> {
-    const media = pluginStore.mediaProvider
     const shot = storyboardStore.shotById(shotId)
-    if (!media || !shot) return undefined
+    if (!shot) return undefined
 
     const existing = jobForShot(shotId)
     if (existing && (existing.status === 'queued' || existing.status === 'running')) return existing
+
+    const media = pluginStore.resolveInstanceCapability<MediaCapabilityProvider>(
+      'media',
+      capabilityForShot(shot),
+    )
+    if (!media) return undefined
 
     const prompt = shot.prompt?.trim() ?? ''
     let providerJob: Job
@@ -113,10 +126,18 @@ export function useShotActions() {
   }
 
   async function cancelGeneration(shotId: string): Promise<void> {
-    const media = pluginStore.mediaProvider
     const job = jobForShot(shotId)
-    if (!media || !job) return
+    if (!job) return
     if (job.status !== 'queued' && job.status !== 'running') return
+    // 任务属于创建它的 Provider（job.pluginId），切换 Provider 后仍取消到正确的实例；
+    // 缺少 pluginId 时回退到按镜头需求的 capability Provider。
+    const media =
+      pluginStore.getProviderInstance<MediaCapabilityProvider>(job.pluginId) ??
+      pluginStore.resolveInstanceCapability<MediaCapabilityProvider>(
+        'media',
+        capabilityForShot(storyboardStore.shotById(shotId)),
+      )
+    if (!media) return
     try {
       await media.cancelJob(job.id)
     } catch {

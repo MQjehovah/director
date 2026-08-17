@@ -314,6 +314,32 @@ describe('useCharacterFeatures', () => {
     expect(useJobStore().jobs).toHaveLength(0)
   })
 
+  it('generatePortrait returns undefined when no provider has the text2image capability', async () => {
+    const registry = new PluginRegistry()
+    registry.register({
+      id: 'vid-only',
+      name: 'Video Only',
+      kind: 'provider',
+      providerType: 'media',
+      enabled: true,
+      capabilities: ['text2video'],
+      instance: {
+        id: 'vid-only',
+        name: 'Video Only',
+        capabilities: ['text2video'],
+        async generateVideo() {
+          return { id: 'v-job', type: 'text2video', status: 'done', progress: 100 }
+        },
+      },
+    })
+    usePluginStore().init(registry)
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明', appearance: '黑发少年' })
+    const job = await useCharacterFeatures().generatePortrait(c.id)
+    expect(job).toBeUndefined()
+    expect(useJobStore().jobs).toHaveLength(0)
+  })
+
   it('generatePortrait creates a text2image job in the job store', async () => {
     initProviders(['media'])
     const store = useCharacterStore()
