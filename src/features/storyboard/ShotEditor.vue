@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { usePluginStore } from '../../stores/pluginStore'
+import { useScriptStore } from '../../stores/scriptStore'
+import { useCharacterStore } from '../../stores/characterStore'
 import { useShotActions } from './useShotActions'
 import { useAssetUrls } from '../shared/useAssetUrls'
 import { Badge, Button, Input, Progress, Select, Textarea } from '../../components/ui'
@@ -27,6 +29,8 @@ const emit = defineEmits<{
 
 const store = useStoryboardStore()
 const pluginStore = usePluginStore()
+const scriptStore = useScriptStore()
+const characterStore = useCharacterStore()
 const actions = useShotActions()
 const { resolveAsset, urlOf } = useAssetUrls()
 
@@ -39,6 +43,7 @@ watch(
   () => [
     shot.value?.metadata?.firstFrameAssetId,
     shot.value?.metadata?.lastFrameAssetId,
+    shot.value?.metadata?.referenceImageAssetId,
   ],
   (ids) => {
     for (const id of ids) {
@@ -75,6 +80,13 @@ const moveOptions: SelectOption[] = [
   { value: 'tracking', label: '跟拍' },
 ]
 
+const videoModeOptions: SelectOption[] = [
+  { value: 'auto', label: '自动（按参考图推断）' },
+  { value: 'text2video', label: '文生视频' },
+  { value: 'image2video', label: '参考生视频' },
+  { value: 'firstLastFrameVideo', label: '首尾帧生视频' },
+]
+
 const currentJob = computed(() => actions.jobForShot(props.shotId))
 const isGenerating = computed(
   () => !!currentJob.value && (currentJob.value.status === 'queued' || currentJob.value.status === 'running'),
@@ -93,6 +105,15 @@ function setCameraField<K extends keyof CameraShape>(field: K, value: CameraShap
 
 function setShotType(value: string): void {
   setField({ shotType: value === 'video' ? 'video' : 'image' })
+}
+
+function setVideoMode(value: string): void {
+  if (!shot.value) return
+  const mode =
+    value === 'text2video' || value === 'image2video' || value === 'firstLastFrameVideo'
+      ? value
+      : undefined
+  setField({ videoMode: mode })
 }
 
 function setPrompt(value: string): void {
@@ -184,6 +205,69 @@ function onRemoveFrame(key: FrameKey): void {
   if (typeof id === 'string') void pluginStore.storageProvider?.revokeAssetUrl?.(id)
 }
 
+const scene = computed(() => {
+  const sceneId = shot.value?.sceneId
+  return sceneId ? scriptStore.scenes.find((s) => s.id === sceneId) : undefined
+})
+
+/** 可选的参考图素材：本镜头上传 + 场次参考图 + 场景图 + 角色参考图 */
+const referenceCandidates = computed(() => {
+  const list: Array<{ id: string; label: string }> = []
+  const s = scene.value
+  if (s?.sceneImage) list.push({ id: s.sceneImage, label: '场景图' })
+  for (const r of s?.referenceImages ?? []) list.push({ id: r, label: '场次参考图' })
+  for (const c of characterStore.characters) {
+    for (const r of c.referenceImages) list.push({ id: r, label: `角色「${c.name}」` })
+  }
+  return list.filter((item, i, arr) => arr.findIndex((x) => x.id === item.id) === i)
+})
+
+const referenceAssetId = computed(() => {
+  const value = shot.value?.metadata?.referenceImageAssetId
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+})
+
+function referenceUrl(): string | undefined {
+  return referenceAssetId.value ? urlOf(referenceAssetId.value) : undefined
+}
+
+function setReferenceAsset(id: string): void {
+  if (!shot.value) return
+  setField({
+    metadata: { ...(shot.value.metadata ?? {}), referenceImageAssetId: id },
+  })
+  void resolveAsset(id)
+}
+
+function onRemoveReference(): void {
+  if (!shot.value) return
+  const id = shot.value.metadata?.referenceImageAssetId
+  setField({
+    metadata: { ...(shot.value.metadata ?? {}), referenceImageAssetId: undefined },
+  })
+  if (typeof id === 'string') void pluginStore.storageProvider?.revokeAssetUrl?.(id)
+}
+
+async function onUploadReference(e: Event): Promise<void> {
+  frameMessage.value = ''
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !shot.value) return
+  const storage = pluginStore.storageProvider
+  if (!storage) {
+    frameMessage.value = '未配置存储 Provider，无法上传参考图。'
+    return
+  }
+  try {
+    const asset = await storage.saveAsset(file, { kind: 'image', source: 'upload' })
+    setReferenceAsset(asset.id)
+    frameMessage.value = '参考图已上传。'
+  } catch (err) {
+    frameMessage.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 async function onGenerate(): Promise<void> {
   message.value = ''
   busy.value = true
@@ -271,8 +355,98 @@ async function onRemove(): Promise<void> {
       </label>
 
       <div v-if="shot.shotType === 'video'" class="flex flex-col gap-2">
-        <span class="text-xs font-medium text-ink-muted">首尾帧（文生视频用）</span>
-        <div class="grid grid-cols-2 gap-2">
+        <label class="block text-xs font-medium text-ink-muted">
+          生成方式
+          <Select
+            class="mt-1"
+            :model-value="shot.videoMode ?? 'auto'"
+            :options="videoModeOptions"
+            data-test="video-mode"
+            @update:model-value="setVideoMode"
+          />
+        </label>
+
+        <div
+          v-if="shot.videoMode === 'text2video'"
+          class="rounded-md bg-zinc-900/60 px-2.5 py-2 text-[10px] leading-relaxed text-ink-muted"
+          data-test="text2video-hint"
+        >
+          文生视频直接由提示词生成，无需参考图。
+        </div>
+
+        <div
+          v-else-if="shot.videoMode === 'image2video'"
+          class="flex flex-col gap-2"
+          data-test="reference-section"
+        >
+          <span class="text-xs font-medium text-ink-muted">参考图（可选角色 / 场景参考图）</span>
+          <div class="group relative">
+            <img
+              v-if="referenceUrl()"
+              :src="referenceUrl()"
+              class="h-24 w-full rounded-md border border-edge bg-zinc-800 object-cover"
+              alt="参考图"
+              data-test="ref-preview"
+            />
+            <div
+              v-else
+              class="flex h-24 w-full items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
+              data-test="ref-empty"
+            >
+              未选择
+            </div>
+            <button
+              v-if="referenceAssetId"
+              type="button"
+              aria-label="删除参考图"
+              title="删除参考图"
+              data-test="ref-remove"
+              class="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full border border-edge bg-zinc-950 text-xs leading-none text-ink-muted transition-colors hover:border-red-500/60 hover:text-red-400 group-hover:flex"
+              @click="onRemoveReference"
+            >
+              ✕
+            </button>
+          </div>
+          <label
+            class="flex h-8 cursor-pointer items-center justify-center gap-1 rounded-md border border-dashed border-zinc-600 bg-zinc-900/40 text-[10px] text-zinc-500 transition-colors hover:border-amber-400/60 hover:text-amber-300"
+            :class="{ 'pointer-events-none opacity-40': busy }"
+            data-test="ref-upload"
+            title="上传参考图"
+          >
+            <span>+ 上传参考图</span>
+            <input
+              type="file"
+              accept="image/*"
+              class="hidden"
+              data-test="ref-input"
+              @change="onUploadReference"
+            />
+          </label>
+          <div v-if="referenceCandidates.length > 0" class="flex flex-col gap-1">
+            <span class="text-[10px] text-ink-muted">从已有素材选择：</span>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="c in referenceCandidates"
+                :key="c.id"
+                type="button"
+                class="rounded-md border px-2 py-1 text-[10px] transition-colors"
+                :class="
+                  c.id === referenceAssetId
+                    ? 'border-amber-400/60 text-amber-300'
+                    : 'border-edge text-ink-muted hover:border-amber-400/40 hover:text-ink'
+                "
+                data-test="ref-candidate"
+                @click="setReferenceAsset(c.id)"
+              >
+                {{ c.label }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="flex flex-col gap-2">
+          <span class="text-xs font-medium text-ink-muted">首尾帧（首尾帧生视频用）</span>
+          <div class="grid grid-cols-2 gap-2">
           <div class="flex flex-col gap-1">
             <div class="group relative">
               <img
@@ -361,15 +535,16 @@ async function onRemove(): Promise<void> {
               />
             </label>
           </div>
+          </div>
+          <p class="text-[10px] leading-relaxed text-ink-muted">
+            上传首尾帧后生成视频时按首尾帧约束起止画面；模板中需配置
+            <code class="text-ink">first_frame</code> / <code class="text-ink">last_frame</code>
+            或 <code class="text-ink">{last_frame}</code> 占位符。
+          </p>
+          <p v-if="frameMessage" class="text-xs text-amber-300" data-test="frame-message">
+            {{ frameMessage }}
+          </p>
         </div>
-        <p class="text-[10px] leading-relaxed text-ink-muted">
-          上传首尾帧后生成视频时按首尾帧约束起止画面；模板中需配置
-          <code class="text-ink">first_frame</code> / <code class="text-ink">last_frame</code>
-          或 <code class="text-ink">{last_frame}</code> 占位符。
-        </p>
-        <p v-if="frameMessage" class="text-xs text-amber-300" data-test="frame-message">
-          {{ frameMessage }}
-        </p>
       </div>
 
       <div class="grid grid-cols-2 gap-2">

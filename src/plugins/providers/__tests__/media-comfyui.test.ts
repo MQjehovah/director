@@ -215,13 +215,477 @@ describe('media-comfyui provider', () => {
     expect(JSON.stringify(graph)).not.toContain('{prompt}')
   })
 
+  it('strips MarkdownNote/comment nodes and widgets_values markers before submitting', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-strip',
+      name: '含注释模板',
+      graphJson: JSON.stringify({
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+        '116': { class_type: 'MarkdownNote', inputs: {} },
+        '117': { class_type: 'Comment', inputs: {} },
+        '118': {
+          class_type: 'SomeCustomNode',
+          inputs: { prompt: 'x', widgets_values: ['a', 'b'] },
+        },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-strip',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pstrip' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '一只猫' })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    expect(graph['116']).toBeUndefined()
+    expect(graph['117']).toBeUndefined()
+    expect(graph['1'].inputs.text).toBe('一只猫')
+    expect(graph['118'].inputs.widgets_values).toBeUndefined()
+    expect(graph['118'].inputs.prompt).toBe('x')
+  })
+
+  it('recovers the switch widget of legacy ComfySwitchNode templates before submitting', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-switch',
+      name: '旧开关模板',
+      graphJson: JSON.stringify({
+        '227:226': {
+          class_type: 'ComfySwitchNode',
+          inputs: {
+            on_false: ['227:224', 0],
+            on_true: ['227:225', 0],
+            widgets_values: [true],
+          },
+        },
+        '227:224': { class_type: 'PrimitiveInt', inputs: { value: 20 } },
+        '227:225': { class_type: 'PrimitiveInt', inputs: { value: 4 } },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-switch',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pswitch' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '一只猫' })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    expect(graph['227:226'].inputs.switch).toBe(true)
+    expect(graph['227:226'].inputs.on_false).toEqual(['227:224', 0])
+    expect(graph['227:226'].inputs.on_true).toEqual(['227:225', 0])
+    expect(graph['227:226'].inputs.widgets_values).toBeUndefined()
+  })
+
+  it('defaults switch to false when an old API-format template lacks it entirely', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-switch-default',
+      name: '无 switch 旧模板',
+      graphJson: JSON.stringify({
+        '227:226': {
+          class_type: 'ComfySwitchNode',
+          inputs: {
+            on_false: ['227:224', 0],
+            on_true: ['227:225', 0],
+          },
+        },
+        '227:224': { class_type: 'PrimitiveInt', inputs: { value: 20 } },
+        '227:225': { class_type: 'PrimitiveInt', inputs: { value: 4 } },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-switch-default',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pswitch2' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '一只猫' })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<string, { inputs: Record<string, unknown> }>
+    expect(graph['227:226'].inputs.switch).toBe(false)
+    expect(graph['227:226'].inputs.on_false).toEqual(['227:224', 0])
+    expect(graph['227:226'].inputs.on_true).toEqual(['227:225', 0])
+  })
+
+  it('surfaces node_errors from ComfyUI validation as a readable message', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-400',
+      name: '校验失败模板',
+      graphJson: JSON.stringify({
+        '227:226': {
+          class_type: 'ComfySwitchNode',
+          inputs: { on_false: ['227:224', 0], on_true: ['227:225', 0] },
+        },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-400',
+    })
+    const promptCall = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            type: 'prompt_outputs_failed_validation',
+            message: 'Prompt outputs failed validation',
+          },
+          node_errors: {
+            '227:226': {
+              errors: [{ type: 'required_input_missing', message: 'Required input is missing: switch' }],
+            },
+          },
+        },
+        false,
+        400,
+      ),
+    )
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    let error: Error | undefined
+    try {
+      await p.generateImage({ prompt: '一只猫' })
+    } catch (e) {
+      error = e instanceof Error ? e : new Error(String(e))
+    }
+    expect(error).toBeDefined()
+    expect(error!.message).toContain('节点 227:226：Required input is missing: switch')
+    // 原始响应必须完整保留，不截断，方便定位故障
+    expect(error!.message).toContain('原始响应')
+    expect(error!.message).toContain('prompt_outputs_failed_validation')
+    expect(error!.message).toContain('Required input is missing: switch')
+  })
+
+  it('throws a clear error when the template still contains an unexpanded subgraph UUID node', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-uuid',
+      name: '未展开子图',
+      graphJson: JSON.stringify({
+        '227': {
+          class_type: '628aea62-54d3-40b8-8b8b-5b648feab266',
+          inputs: { prompt: '黄昏' },
+        },
+      }),
+      promptNodeId: '227',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-uuid',
+    })
+    const fetchMock = vi.fn(() => jsonResponse({}))
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await expect(p.generateImage({ prompt: '黄昏' })).rejects.toThrow('未展开的子图节点')
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/prompt'),
+      expect.anything(),
+    )
+  })
+
+  it('repairs stale templates with shifted CLIPLoader values before submitting', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-stale',
+      name: '旧版参考生视频',
+      graphJson: JSON.stringify({
+        '227:212': {
+          class_type: 'CLIPLoader',
+          inputs: { type: 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', device: 'minimax' },
+        },
+        '227:214': {
+          class_type: 'VAELoader',
+          inputs: { widgets_values: ['minimax_h3_audio_vae_fp32.safetensors'] },
+        },
+        '227:132': {
+          class_type: 'PrimitiveFloat',
+          inputs: { widgets_values: [5] },
+        },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-stale',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pstale' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '一只猫' })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    // 旧版错位自动修复：文件名回到 clip_name，type/device 恢复，缺失值从 widgets_values 恢复
+    expect(graph['227:212'].inputs.clip_name).toBe('qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors')
+    expect(graph['227:212'].inputs.type).toBe('minimax')
+    expect(graph['227:212'].inputs.device).toBe('default')
+    expect(graph['227:214'].inputs.vae_name).toBe('minimax_h3_audio_vae_fp32.safetensors')
+    expect(graph['227:132'].inputs.value).toBe(5)
+  })
+
+  it('fills a missing PrimitiveFloat duration from the request when no placeholder exists', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-duration',
+      name: '时长模板',
+      graphJson: JSON.stringify({
+        '227:132': { class_type: 'PrimitiveFloat', inputs: {} },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+        '92': { class_type: 'SaveVideo', inputs: { video: ['1', 0] } },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      textVideoWorkflowTemplateId: 'tpl-duration',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pdur' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateVideo({ prompt: '奔跑的猫', duration: 8 })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.prompt['227:132'].inputs.value).toBe(8)
+  })
+
+  it('accepts the reference MiniMax H3 API export as a template and submits it intact', async () => {
+    // 与用户从应用导出的正确 MiniMax H3 参考生视频 API 图一致（省略 _meta）
+    const reference: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {
+      '92': {
+        class_type: 'SaveVideo',
+        inputs: {
+          filename_prefix: 'video/MiniMax_H3',
+          format: 'auto',
+          codec: 'auto',
+          video: ['227:223', 0],
+        },
+      },
+      '115': {
+        class_type: 'ResolutionSelector',
+        inputs: { aspect_ratio: '16:9 (Widescreen)', megapixels: 0.4, multiple: 32 },
+      },
+      '228': {
+        class_type: 'LoadImage',
+        inputs: { image: 'Qwen-Image-2512_00013_.png [output]' },
+      },
+      '227:209': {
+        class_type: 'LoraLoaderModelOnly',
+        inputs: {
+          lora_name: 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors',
+          strength_model: 1,
+          model: ['227:211', 0],
+        },
+      },
+      '227:210': {
+        class_type: 'ComfySwitchNode',
+        inputs: { switch: false, on_false: ['227:211', 0], on_true: ['227:209', 0] },
+      },
+      '227:211': {
+        class_type: 'UNETLoader',
+        inputs: { unet_name: 'minimax_h3_ref2va_pruned_nvfp4.safetensors', weight_dtype: 'default' },
+      },
+      '227:212': {
+        class_type: 'CLIPLoader',
+        inputs: {
+          clip_name: 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors',
+          type: 'minimax',
+          device: 'default',
+        },
+      },
+      '227:213': {
+        class_type: 'VAELoader',
+        inputs: { vae_name: 'minimax_h3_video_vae_fp16.safetensors' },
+      },
+      '227:214': {
+        class_type: 'VAELoader',
+        inputs: { vae_name: 'minimax_h3_audio_vae_fp32.safetensors' },
+      },
+      '227:215': {
+        class_type: 'MiniMaxH3ReferenceToVideo',
+        inputs: {
+          prompt: '使用<ref_image_0>作为严格的角色参考',
+          width: ['115', 0],
+          height: ['115', 1],
+          length: ['227:131', 1],
+          ref_image_size: 'match',
+          clip: ['227:212', 0],
+          vae: ['227:213', 0],
+          audio_vae: ['227:214', 0],
+          'ref_images.ref_image_0': ['228', 0],
+        },
+      },
+      '227:216': {
+        class_type: 'RandomNoise',
+        inputs: { noise_seed: 642251290792234 },
+      },
+      '227:217': {
+        class_type: 'BasicGuider',
+        inputs: { model: ['227:210', 0], conditioning: ['227:215', 0] },
+      },
+      '227:218': {
+        class_type: 'KSamplerSelect',
+        inputs: { sampler_name: 'res_multistep' },
+      },
+      '227:219': {
+        class_type: 'BasicScheduler',
+        inputs: {
+          scheduler: 'simple',
+          steps: ['227:226', 0],
+          denoise: 1,
+          model: ['227:210', 0],
+        },
+      },
+      '227:220': {
+        class_type: 'SamplerCustomAdvanced',
+        inputs: {
+          noise: ['227:216', 0],
+          guider: ['227:217', 0],
+          sampler: ['227:218', 0],
+          sigmas: ['227:219', 0],
+          latent_image: ['227:215', 1],
+        },
+      },
+      '227:221': {
+        class_type: 'VAEDecode',
+        inputs: { samples: ['227:220', 0], vae: ['227:213', 0] },
+      },
+      '227:222': {
+        class_type: 'VAEDecodeAudio',
+        inputs: { samples: ['227:220', 0], vae: ['227:214', 0] },
+      },
+      '227:223': {
+        class_type: 'CreateVideo',
+        inputs: {
+          fps: 24,
+          bit_depth: 8,
+          images: ['227:221', 0],
+          audio: ['227:222', 0],
+        },
+      },
+      '227:224': { class_type: 'PrimitiveInt', inputs: { value: 20 } },
+      '227:225': { class_type: 'PrimitiveInt', inputs: { value: 4 } },
+      '227:226': {
+        class_type: 'ComfySwitchNode',
+        inputs: { switch: false, on_false: ['227:224', 0], on_true: ['227:225', 0] },
+      },
+      '227:131': {
+        class_type: 'ComfyMathExpression',
+        inputs: {
+          expression: 'max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17',
+          'values.a': ['227:132', 0],
+        },
+      },
+      '227:132': { class_type: 'PrimitiveFloat', inputs: { value: 5 } },
+    }
+    saveWorkflowTemplate({
+      id: 'tpl-ref',
+      name: 'MiniMaxH3参考生视频(正确)',
+      graphJson: JSON.stringify(reference),
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      textVideoWorkflowTemplateId: 'tpl-ref',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pref' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateVideo({ prompt: '新的镜头提示词', duration: 5 })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    // 完整模板直接提交，不被旧版修复/校验误伤：音频 VAE、时长、CLIP、switch 均保留
+    expect(graph['227:214'].inputs.vae_name).toBe('minimax_h3_audio_vae_fp32.safetensors')
+    expect(graph['227:213'].inputs.vae_name).toBe('minimax_h3_video_vae_fp16.safetensors')
+    expect(graph['227:132'].inputs.value).toBe(5)
+    expect(graph['227:212'].inputs.clip_name).toBe('qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors')
+    expect(graph['227:212'].inputs.type).toBe('minimax')
+    expect(graph['227:226'].inputs.switch).toBe(false)
+    expect(graph['227:215'].inputs.prompt).toBe('新的镜头提示词')
+    expect(typeof graph['227:216'].inputs.noise_seed).toBe('number')
+    expect(graph['227:215'].inputs['ref_images.ref_image_0']).toEqual(['228', 0])
+  })
+
+  it('reports precisely which critical inputs remain missing in stale templates', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-missing',
+      name: '缺音频VAE模板',
+      graphJson: JSON.stringify({
+        '227:214': { class_type: 'VAELoader', inputs: {} },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-missing',
+    })
+    const fetchMock = vi.fn(() => jsonResponse({}))
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    let error: Error | undefined
+    try {
+      await p.generateImage({ prompt: 'x' })
+    } catch (e) {
+      error = e instanceof Error ? e : new Error(String(e))
+    }
+    expect(error).toBeDefined()
+    expect(error!.message).toContain('227:214')
+    expect(error!.message).toContain('vae_name')
+    expect(error!.message).toContain('原始工作流')
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/prompt'),
+      expect.anything(),
+    )
+  })
+
   it('injects negative prompt into a custom node negative_prompt field', async () => {
     saveWorkflowTemplate({
       id: 'tpl-custom-neg',
       name: '自定义负向模板',
       graphJson: JSON.stringify({
         '105': {
-          class_type: '4c314f31-ecda-4b08-ae98-faaba1bf613f',
+          class_type: 'MiniMaxH3Subgraph',
           inputs: { prompt: '{prompt}', negative_prompt: '{negative_prompt}', noise_seed: 768 },
         },
       }),
@@ -246,6 +710,94 @@ describe('media-comfyui provider', () => {
     expect(graph['105'].inputs.negative_prompt).toBe('低分辨率，画面模糊')
     expect(graph['105'].inputs.noise_seed).toBe(42)
     expect(JSON.stringify(graph)).not.toContain('{negative_prompt}')
+  })
+
+  it('injects prompt/negative/seed through primitive refs in an expanded subgraph template', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-expanded',
+      name: '展开子图模板',
+      graphJson: JSON.stringify({
+        '238:9': {
+          class_type: 'MiniMaxH3TextToVideo',
+          inputs: {
+            prompt: ['238:7', 0],
+            negative_prompt: ['238:70', 0],
+            seed: ['238:8', 0],
+          },
+        },
+        '238:7': { class_type: 'PrimitiveString', inputs: { value: '默认提示' } },
+        '238:70': { class_type: 'PrimitiveString', inputs: { value: '' } },
+        '238:8': { class_type: 'PrimitiveInt', inputs: { value: 0 } },
+      }),
+      promptNodeId: '238:9',
+      negativeNodeId: '238:9',
+      seedNodeId: '238:9',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-expanded',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pexp' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '黄昏天台', negativePrompt: '模糊', seed: 42 })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    // 值写进 Primitive 节点，生成节点保持引用不变
+    expect(graph['238:7'].inputs.value).toBe('黄昏天台')
+    expect(graph['238:70'].inputs.value).toBe('模糊')
+    expect(graph['238:8'].inputs.value).toBe(42)
+    expect(graph['238:9'].inputs.prompt).toEqual(['238:7', 0])
+    expect(graph['238:9'].inputs.seed).toEqual(['238:8', 0])
+  })
+
+  it('recovers a template with stale/missing node ids by locating prompt/negative/seed in the graph', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-stale-ids',
+      name: '失效节点ID模板',
+      graphJson: JSON.stringify({
+        '238:9': {
+          class_type: 'MiniMaxH3TextToVideo',
+          inputs: {
+            prompt: ['238:7', 0],
+            negative_prompt: ['238:70', 0],
+            seed: ['238:8', 0],
+          },
+        },
+        '238:7': { class_type: 'PrimitiveString', inputs: { value: '默认提示' } },
+        '238:70': { class_type: 'PrimitiveString', inputs: { value: '' } },
+        '238:8': { class_type: 'PrimitiveInt', inputs: { value: 0 } },
+      }),
+      // 旧模板：记录的 id 已失效（重新转换后节点 id 变化）
+      promptNodeId: 'stale-999',
+      negativeNodeId: 'stale-999',
+      seedNodeId: 'stale-999',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-stale-ids',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'precover' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '黄昏天台', negativePrompt: '模糊', seed: 7 })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    expect(graph['238:7'].inputs.value).toBe('黄昏天台')
+    expect(graph['238:70'].inputs.value).toBe('模糊')
+    expect(graph['238:8'].inputs.value).toBe(7)
   })
 
   it('throws a clear error when the template has no prompt node and no placeholders', async () => {

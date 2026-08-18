@@ -7,6 +7,7 @@ import ShotTimeline from '../ShotTimeline.vue'
 import StoryboardPanel from '../StoryboardPanel.vue'
 import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { useScriptStore } from '../../../stores/scriptStore'
+import { useCharacterStore } from '../../../stores/characterStore'
 import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useShotActions, buildShotPrompt } from '../useShotActions'
@@ -157,6 +158,14 @@ describe('shot grid', () => {
     await firstCard.get('[data-test="shot-move-down"]').trigger('click')
     expect(store.shots.map((s) => s.prompt)).toEqual(['第二个', '第一个'])
   })
+
+  it('renders only the shots passed via props when grouped by scene', () => {
+    const store = useStoryboardStore()
+    const a = store.addShot({ shotType: 'image', sceneId: 's1' })
+    store.addShot({ shotType: 'image', sceneId: 's2' })
+    const w = mount(ShotGrid, { props: { shots: [store.shotById(a.id)!] } })
+    expect(w.findAll('[data-test="shot-card"]')).toHaveLength(1)
+  })
 })
 
 describe('shot editor', () => {
@@ -221,6 +230,80 @@ describe('shot editor', () => {
     const w2 = mount(ShotEditor, { props: { shotId: imageShot.id } })
     expect(w2.find('[data-test="first-frame-upload"]').exists()).toBe(false)
     expect(w2.find('[data-test="last-frame-upload"]').exists()).toBe(false)
+  })
+
+  it('switches the video generation mode: text2video hides frame uploads', async () => {
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' })
+    const w = mount(ShotEditor, { props: { shotId: shot.id } })
+    await w.get('[data-test="video-mode"]').setValue('text2video')
+    expect(store.shotById(shot.id)?.videoMode).toBe('text2video')
+    expect(w.find('[data-test="text2video-hint"]').exists()).toBe(true)
+    expect(w.find('[data-test="first-frame-upload"]').exists()).toBe(false)
+    expect(w.find('[data-test="reference-section"]').exists()).toBe(false)
+  })
+
+  it('picks a reference image from scene and character reference images', async () => {
+    const scriptStore = useScriptStore()
+    const characterStore = useCharacterStore()
+    const scene = scriptStore.addScene({ title: '屋顶' })
+    scriptStore.updateScene(scene.id, {
+      sceneImage: 'scene-img',
+      referenceImages: ['scene-ref'],
+    })
+    characterStore.addCharacter({ name: '小明', referenceImages: ['char-ref'] })
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video', sceneId: scene.id })
+    const w = mount(ShotEditor, { props: { shotId: shot.id } })
+    await w.get('[data-test="video-mode"]').setValue('image2video')
+    const labels = w.findAll('[data-test="ref-candidate"]').map((n) => n.text())
+    expect(labels).toContain('场景图')
+    expect(labels).toContain('场次参考图')
+    expect(labels).toContain('角色「小明」')
+    await w.findAll('[data-test="ref-candidate"]')[2].trigger('click')
+    expect(store.shotById(shot.id)?.metadata.referenceImageAssetId).toBe('char-ref')
+  })
+
+  it('uploads a reference image for reference-video generation', async () => {
+    const registry = new PluginRegistry()
+    registry.register(createStubMediaPlugin({ delayMs: 30 }))
+    registry.register({
+      id: 'storage-ref',
+      name: 'Ref Storage',
+      kind: 'provider',
+      providerType: 'storage',
+      enabled: true,
+      instance: {
+        id: 'storage-ref',
+        name: 'Ref Storage',
+        async saveAsset(file: File, meta: { kind: string; source: string }) {
+          return {
+            id: `ref-${file.name}`,
+            kind: meta.kind,
+            source: meta.source,
+            url: `data:image/png;base64,FAKE`,
+          }
+        },
+        async loadAsset(id: string) {
+          return { id, kind: 'image', source: 'upload', url: `data:image/png;base64,FAKE` }
+        },
+        async getAssetUrl(asset: Asset) {
+          return asset.url
+        },
+        async revokeAssetUrl() {},
+      },
+    })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' })
+    const w = mount(ShotEditor, { props: { shotId: shot.id } })
+    await w.get('[data-test="video-mode"]').setValue('image2video')
+    const input = w.get('[data-test="ref-input"]')
+    const file = { name: 'ref.png', text: async () => '' } as unknown as File
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+    expect(store.shotById(shot.id)?.metadata.referenceImageAssetId).toBe('ref-ref.png')
   })
 
   it('uploads a first frame image and stores the asset id in metadata', async () => {
@@ -529,6 +612,58 @@ describe('useShotActions', () => {
     expect(job?.type).toBe('text2video')
   })
 
+  it('explicit text2video mode ignores uploaded frames and passes no image params', async () => {
+    initMedia()
+    const store = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = store.addShot({
+      shotType: 'video' as const,
+      prompt: '文生视频',
+      videoMode: 'text2video',
+    })
+    store.updateShot(shot.id, {
+      metadata: { firstFrameAssetId: 'first', lastFrameAssetId: 'last' },
+    })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('text2video')
+    expect(jobs.jobs[0].params?.imageAssetId).toBeUndefined()
+    expect(jobs.jobs[0].params?.lastFrameAssetId).toBeUndefined()
+  })
+
+  it('explicit image2video mode uses the selected reference image', async () => {
+    initMedia()
+    const store = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = store.addShot({
+      shotType: 'video' as const,
+      prompt: '参考生视频',
+      videoMode: 'image2video',
+    })
+    store.updateShot(shot.id, { metadata: { referenceImageAssetId: 'ref-1' } })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('image2video')
+    expect(jobs.jobs[0].params?.imageAssetId).toBe('ref-1')
+    expect(store.shotById(shot.id)?.metadata.firstFrameAssetId).toBe('ref-1')
+  })
+
+  it('explicit firstLastFrameVideo mode uses both frames when present', async () => {
+    initMedia()
+    const store = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = store.addShot({
+      shotType: 'video' as const,
+      prompt: '首尾帧',
+      videoMode: 'firstLastFrameVideo',
+    })
+    store.updateShot(shot.id, {
+      metadata: { firstFrameAssetId: 'first', lastFrameAssetId: 'last' },
+    })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('firstLastFrameVideo')
+    expect(jobs.jobs[0].params?.imageAssetId).toBe('first')
+    expect(jobs.jobs[0].params?.lastFrameAssetId).toBe('last')
+  })
+
   it('generateMedia resolves by capability: image shot uses the text2image provider', async () => {
     const registry = new PluginRegistry()
     registerCapabilityProvider(registry, { id: 'img', caps: ['text2image'], jobType: 'text2image' })
@@ -760,5 +895,18 @@ describe('buildShotPrompt', () => {
       mediaAssets: [],
     }
     expect(buildShotPrompt(shot)).toBe('场景：屋顶，夜景，少年抬头')
+  })
+
+  it('prefixes the global style before the scene context', () => {
+    const shot = {
+      id: 's1',
+      shotType: 'image' as const,
+      prompt: '少年抬头',
+      metadata: { sceneContext: '屋顶，夜景' },
+      mediaAssets: [],
+    }
+    expect(buildShotPrompt(shot, '新海诚风格')).toBe(
+      '风格：新海诚风格，场景：屋顶，夜景，少年抬头',
+    )
   })
 })

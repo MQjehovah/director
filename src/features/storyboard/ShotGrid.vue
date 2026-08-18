@@ -83,6 +83,10 @@ function move(delta: -1 | 1, shotId: string): void {
   store.moveShot(from, from + delta)
 }
 
+function storeIndex(shotId: string): number {
+  return store.shots.findIndex((s) => s.id === shotId)
+}
+
 async function removeShot(id: string): Promise<void> {
   await actions.cancelGeneration(id)
   store.removeShot(id)
@@ -118,9 +122,9 @@ function onDrop(e: DragEvent, shotId: string): void {
       <span class="text-xs text-ink-muted">共 {{ store.shots.length }} 个镜头</span>
     </div>
 
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-3">
       <div
-        v-for="(shot, index) in store.shots"
+        v-for="(shot, index) in visibleShots"
         :key="shot.id"
         data-test="shot-card"
         draggable="true"
@@ -187,7 +191,7 @@ function onDrop(e: DragEvent, shotId: string): void {
               type="button"
               aria-label="前移"
               data-test="shot-move-up"
-              :disabled="index === 0"
+              :disabled="storeIndex(shot.id) === 0"
               class="rounded-md px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink disabled:opacity-40"
               @click="move(-1, shot.id)"
             >
@@ -197,7 +201,7 @@ function onDrop(e: DragEvent, shotId: string): void {
               type="button"
               aria-label="后移"
               data-test="shot-move-down"
-              :disabled="index === visibleShots.length - 1"
+              :disabled="storeIndex(shot.id) === store.shots.length - 1"
               class="rounded-md px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-zinc-800 hover:text-ink disabled:opacity-40"
               @click="move(1, shot.id)"
             >

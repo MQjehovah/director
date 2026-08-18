@@ -28,6 +28,14 @@ describe('script store', () => {
     expect(s.script).not.toBeNull()
     expect(s.script?.scenes[0].id).toBe(scene.id)
   })
+  it('updateScriptMeta creates the script when missing and stores the global prompt', () => {
+    const s = useScriptStore()
+    s.updateScriptMeta({ globalContext: '新海诚风格，低饱和胶片质感' })
+    expect(s.script?.globalContext).toBe('新海诚风格，低饱和胶片质感')
+    expect(s.scenes).toEqual([])
+    s.updateScriptMeta({ globalContext: '' })
+    expect(s.script?.globalContext).toBeUndefined()
+  })
   it('imports markdown into scenes and beats', () => {
     const s = useScriptStore()
     const md = [

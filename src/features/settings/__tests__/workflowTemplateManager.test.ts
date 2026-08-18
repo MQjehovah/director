@@ -5,8 +5,6 @@ import {
   listWorkflowTemplates,
   saveWorkflowTemplate,
 } from '../../comfyui/workflowStore'
-import { loadProviderConfig, saveProviderConfig } from '../httpBackendConfig'
-import { MEDIA_COMFYUI_ID } from '../../../plugins/providers/media-comfyui'
 
 function linkedGraphJson(): string {
   return JSON.stringify({
@@ -158,22 +156,59 @@ describe('WorkflowTemplateManager', () => {
     expect(listWorkflowTemplates().map((t) => t.id)).toEqual(['keep'])
   })
 
-  it('sets a template as the current comfyui provider template', async () => {
-    saveWorkflowTemplate({ id: 'cur', name: '当前模板', graphJson: '{}' })
+  it('badges stale templates whose CLIPLoader type was shifted to a model filename', async () => {
+    saveWorkflowTemplate({ id: 'fresh', name: '新模板', graphJson: '{}' })
+    saveWorkflowTemplate({
+      id: 'stale',
+      name: '旧模板',
+      graphJson: JSON.stringify({
+        '227:212': {
+          class_type: 'CLIPLoader',
+          inputs: { type: 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', device: 'minimax' },
+        },
+      }),
+    })
     const w = mount(WorkflowTemplateManager)
-    await w.get('[data-test="wf-use"]').trigger('click')
-    expect(loadProviderConfig(MEDIA_COMFYUI_ID)?.workflowTemplateId).toBe('cur')
+    const badges = w.findAll('[data-test="wf-stale-badge"]')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].text()).toContain('旧版本')
+    // 旧模板的删除按钮在第二个模板条目上
+    await w.findAll('[data-test="wf-delete"]')[1].trigger('click')
+    expect(listWorkflowTemplates().map((t) => t.id)).toEqual(['fresh'])
   })
 
-  it('设为当前 preserves the existing provider config (baseUrl 等不被覆盖)', async () => {
-    saveProviderConfig(MEDIA_COMFYUI_ID, { baseUrl: 'http://127.0.0.1:8188', apiKey: 'sk-x' })
-    saveWorkflowTemplate({ id: 'cur', name: '当前模板', graphJson: '{}' })
+  it('repairs and imports an expanded API graph with stale shifted CLIPLoader values', async () => {
     const w = mount(WorkflowTemplateManager)
-    await w.get('[data-test="wf-use"]').trigger('click')
-    const config = loadProviderConfig(MEDIA_COMFYUI_ID)
-    expect(config?.workflowTemplateId).toBe('cur')
-    expect(config?.baseUrl).toBe('http://127.0.0.1:8188')
-    expect(config?.apiKey).toBe('sk-x')
+    await w.get('[data-test="wf-graph"]').setValue(
+      JSON.stringify({
+        '227:212': {
+          class_type: 'CLIPLoader',
+          inputs: { type: 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', device: 'minimax' },
+        },
+        '227:214': {
+          class_type: 'VAELoader',
+          inputs: { widgets_values: ['minimax_h3_audio_vae_fp32.safetensors'] },
+        },
+        '227:132': {
+          class_type: 'PrimitiveFloat',
+          inputs: { widgets_values: [5] },
+        },
+      }),
+    )
+    await w.get('[data-test="wf-import"]').trigger('click')
+    expect(w.get('[data-test="wf-warnings"]').text()).toContain('自动修复')
+    await w.get('[data-test="wf-save"]').trigger('click')
+    const templates = listWorkflowTemplates()
+    expect(templates).toHaveLength(1)
+    const saved = JSON.parse(templates[0].graphJson) as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    expect(saved['227:212'].inputs.clip_name).toBe('qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors')
+    expect(saved['227:212'].inputs.type).toBe('minimax')
+    expect(saved['227:212'].inputs.device).toBe('default')
+    expect(saved['227:214'].inputs.vae_name).toBe('minimax_h3_audio_vae_fp32.safetensors')
+    expect(saved['227:132'].inputs.value).toBe(5)
   })
 
   it('fetches and imports workflows from a ComfyUI address', async () => {
@@ -219,8 +254,13 @@ describe('WorkflowTemplateManager', () => {
 
     await w.get('[data-test="wf-remote-import"]').trigger('click')
     await flushPromises()
-    expect(w.get('[data-test="wf-detected"]').text()).toContain('6')
-    await w.get('[data-test="wf-save"]').trigger('click')
+    expect(w.get('[data-test="wf-message"]').text()).toContain('导入并保存')
+    // 拉取导入直接保存，不再需要二次点击「保存模板」
     expect(listWorkflowTemplates().map((t) => t.name)).toContain('远程工作流')
+
+    // 「原始」按钮把 ComfyUI 返回的未转换 JSON 填入文本框
+    await w.get('[data-test="wf-remote-raw"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="wf-message"]').text()).toContain('原始工作流 JSON')
   })
 })

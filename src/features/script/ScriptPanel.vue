@@ -29,6 +29,12 @@ function addScene(): void {
   cutMessage.value = ''
 }
 
+function setGlobalContext(value: string): void {
+  store.updateScriptMeta({
+    globalContext: value.trim() === '' ? undefined : value,
+  })
+}
+
 function removeScene(id: string): void {
   store.removeScene(id)
   if (selectedId.value === id) selectedId.value = undefined
@@ -171,6 +177,27 @@ async function onCutScene(): Promise<void> {
       <p v-if="cutMessage" class="shrink-0 border-b border-edge bg-panel px-4 py-2 text-xs text-amber-300" data-test="message">
         {{ cutMessage }}
       </p>
+
+      <section
+        class="shrink-0 border-b border-edge bg-panel px-4 py-3"
+        data-test="global-prompt-section"
+      >
+        <div class="flex items-baseline justify-between gap-2">
+          <h3 class="text-xs font-semibold text-ink">全局提示词</h3>
+          <span class="text-[10px] text-ink-muted">画风 / 风格 / 艺术指导</span>
+        </div>
+        <Textarea
+          :model-value="store.script?.globalContext ?? ''"
+          :rows="2"
+          class="mt-2 !text-xs"
+          placeholder="例如：新海诚风格、低饱和胶片质感、写实光影……会合并进每个镜头的提示词"
+          data-test="global-prompt"
+          @update:model-value="setGlobalContext"
+        />
+        <p class="mt-1 text-[10px] text-ink-muted">
+          全局提示词会作为「风格」前缀合并到每个镜头生成时的提示词中。
+        </p>
+      </section>
 
       <div class="min-h-0 flex-1 overflow-y-auto">
         <SceneEditor v-if="selectedId" :key="selectedId" :scene-id="selectedId" />

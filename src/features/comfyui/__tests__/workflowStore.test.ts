@@ -108,6 +108,29 @@ describe('workflowStore', () => {
     expect(result.seedNodeId).toBe('105')
   })
 
+  it('detects prompt/negative/seed nodes in an expanded subgraph graph (values via primitive refs)', () => {
+    const result = importWorkflowGraph(
+      JSON.stringify({
+        '238:9': {
+          class_type: 'MiniMaxH3TextToVideo',
+          inputs: {
+            prompt: ['238:7', 0],
+            negative_prompt: ['238:70', 0],
+            seed: ['238:8', 0],
+          },
+        },
+        '238:7': { class_type: 'PrimitiveString', inputs: { value: '默认提示' } },
+        '238:70': { class_type: 'PrimitiveString', inputs: { value: '' } },
+        '238:8': { class_type: 'PrimitiveInt', inputs: { value: 0 } },
+      }),
+      't',
+    )
+    if ('error' in result) throw new Error(result.error)
+    expect(result.promptNodeId).toBe('238:9')
+    expect(result.negativeNodeId).toBe('238:9')
+    expect(result.seedNodeId).toBe('238:9')
+  })
+
   it('returns an error for invalid JSON', () => {
     const result = importWorkflowGraph('{oops', 't')
     expect('error' in result).toBe(true)

@@ -21,12 +21,31 @@ export const useScriptStore = defineStore('script', () => {
     script.value = null
   }
 
-  function addScene(data: SceneInput = {}): Scene {
+  /** 确保剧本对象存在（编辑全局信息/标题时用） */
+  function ensureScript(): Script {
     if (!script.value) {
       script.value = ScriptSchema.parse({ id: newId('script'), title: '未命名剧本' })
     }
+    return script.value
+  }
+
+  /** 更新剧本级元信息（标题/梗概/全局提示词），无剧本时自动创建 */
+  function updateScriptMeta(
+    patch: Partial<Pick<Script, 'title' | 'synopsis' | 'globalContext'>>,
+  ): void {
+    const current = ensureScript()
+    const next: typeof patch = { ...patch }
+    if (typeof next.globalContext === 'string') {
+      const trimmed = next.globalContext.trim()
+      next.globalContext = trimmed === '' ? undefined : trimmed
+    }
+    setScript({ ...current, ...next })
+  }
+
+  function addScene(data: SceneInput = {}): Scene {
+    const current = ensureScript()
     const scene = SceneSchema.parse({ id: newId('scene'), ...data })
-    script.value = ScriptSchema.parse({ ...script.value, scenes: [...script.value.scenes, scene] })
+    script.value = ScriptSchema.parse({ ...current, scenes: [...current.scenes, scene] })
     return scene
   }
 
@@ -151,6 +170,8 @@ export const useScriptStore = defineStore('script', () => {
     scenes,
     setScript,
     clearScript,
+    ensureScript,
+    updateScriptMeta,
     addScene,
     updateScene,
     removeScene,

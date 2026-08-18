@@ -13,6 +13,9 @@ export const AngleSchema = z.enum(['eye-level', 'high', 'low', 'dutch'])
 
 export const MoveSchema = z.enum(['static', 'pan', 'tilt', 'zoom-in', 'zoom-out', 'tracking'])
 
+/** 视频镜头的生成方式：文生视频 / 参考生视频 / 首尾帧生视频；不设置时按可用参考图自动推断 */
+export const VideoModeSchema = z.enum(['text2video', 'image2video', 'firstLastFrameVideo'])
+
 export const CameraSchema = z.object({
   shotSize: ShotSizeSchema,
   angle: AngleSchema,
@@ -25,6 +28,7 @@ export const ShotSchema = z.object({
   sceneId: z.string().optional(),
   beatRef: z.string().optional(),
   shotType: ShotTypeSchema,
+  videoMode: VideoModeSchema.optional(),
   camera: CameraSchema.optional(),
   prompt: z.string().optional(),
   negativePrompt: z.string().optional(),

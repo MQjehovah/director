@@ -339,10 +339,21 @@ function applyDynamicInputs(
     }
   }
   if (opts.duration !== undefined) {
+    let replaced = false
     for (const node of Object.values(graph)) {
       for (const key of Object.keys(node.inputs)) {
         if (node.inputs[key] === '{duration}') {
           node.inputs[key] = opts.duration
+          replaced = true
+        }
+      }
+    }
+    if (!replaced) {
+      // MiniMax 等模板的时长由子图内 PrimitiveFloat（如 227:132）提供；
+      // 旧版展开图缺值时，用本次请求的时长补上
+      for (const node of Object.values(graph)) {
+        if (node.class_type === 'PrimitiveFloat' && node.inputs.value === undefined) {
+          node.inputs.value = opts.duration
         }
       }
     }
@@ -442,7 +453,260 @@ interface TemplateNodeIds {
   seedNodeId?: string
 }
 
+/** 纯前端节点类型：ComfyUI 后端没有对应节点类，提交前必须剔除 */
+const UI_ONLY_NODE_TYPES = new Set(['MarkdownNote', 'Note', 'Comment'])
+
+/** 子图实例节点的 class_type 是 UUID：未展开时 ComfyUI 后端不认识 */
+const SUBGRAPH_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** 旧模板兜底：ComfySwitchNode 的 switch widget 值曾残留在 widgets_values 里，需提升为必填输入 */
+const SWITCH_NODE_TYPES = new Set(['ComfySwitchNode', 'ComfySoftSwitchNode'])
+
+/** 解析 ComfyUI 校验错误（node_errors）为可读摘要；无法解析时原样返回 */
+function describeValidationError(text: string): string {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return text
+    const body = parsed as {
+      node_errors?: Record<string, { errors?: Array<{ type?: string; message?: string; details?: string }> }>
+    }
+    const nodeErrors = body.node_errors
+    if (!nodeErrors || typeof nodeErrors !== 'object') return text
+    const parts: string[] = []
+    for (const [nodeId, err] of Object.entries(nodeErrors)) {
+      const messages = (err?.errors ?? [])
+        .map((e) => e?.message || e?.details || e?.type)
+        .filter((m): m is string => typeof m === 'string' && m.length > 0)
+      if (messages.length > 0) parts.push(`节点 ${nodeId}：${messages.join('；')}`)
+    }
+    return parts.length > 0 ? `ComfyUI 校验失败：${parts.join('；')}` : text
+  } catch {
+    return text
+  }
+}
+
+/**
+ * 提交前清理模板图：
+ * - 剔除纯前端注释/便签节点（否则 ComfyUI 报 missing_node_type）；
+ * - 移除我们导入时保留的 widgets_values 标记键（不是真实输入，避免污染请求）；
+ * - 旧模板中 ComfySwitchNode 的 switch 值若残留在 widgets_values，提升为命名输入再移除；
+ * - API 格式旧模板完全缺失 switch 时默认 false（走 on_false 分支），避免校验拒绝。
+ * - 未展开的子图 UUID 节点给出明确提示（旧模板需重新导入以展开）。
+ */
+function stripUiOnlyNodes(
+  graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
+  const cleaned: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {}
+  for (const [id, node] of Object.entries(graph)) {
+    if (SUBGRAPH_UUID_RE.test(node.class_type)) {
+      throw new Error(
+        `模板包含未展开的子图节点（${node.class_type}，节点 #${id}）。请重新导入该工作流模板以展开子图，或确认该子图已作为蓝图安装到 ComfyUI。`,
+      )
+    }
+    if (UI_ONLY_NODE_TYPES.has(node.class_type)) continue
+    const inputs: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(node.inputs)) {
+      if (key === 'widgets_values') {
+        // 旧模板：ComfySwitchNode 的 switch 值残留在 widgets_values 中，提交前恢复为命名输入
+        if (
+          SWITCH_NODE_TYPES.has(node.class_type) &&
+          inputs.switch === undefined &&
+          Array.isArray(value) &&
+          value.length > 0 &&
+          value[0] !== null &&
+          value[0] !== undefined
+        ) {
+          inputs.switch = value[0]
+        }
+        continue
+      }
+      inputs[key] = value
+    }
+    // 自愈：旧模板（尤其直接粘贴 API 格式）可能完全没有 switch 值，默认走 on_false 分支
+    if (SWITCH_NODE_TYPES.has(node.class_type) && inputs.switch === undefined) {
+      inputs.switch = false
+    }
+    cleaned[id] = { class_type: node.class_type, inputs }
+  }
+  return cleaned
+}
+
+/** 旧版本模板特征：CLIPLoader 的 type 被错位成模型文件名（早期导入转换 bug 遗留） */
+const CLIP_TYPE_FILENAME_RE = /\.(safetensors|gguf|sft|bin)$/i
+
+export function isStaleBrokenTemplate(
+  graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+): boolean {
+  return Object.values(graph).some(
+    (n) =>
+      n.class_type === 'CLIPLoader' &&
+      typeof n.inputs.type === 'string' &&
+      CLIP_TYPE_FILENAME_RE.test(n.inputs.type),
+  )
+}
+
+/**
+ * 修复旧版展开图的已知参数错位：
+ * - CLIPLoader 的 type 被错位成模型文件名 → 把文件名放回 clip_name，type/device 从错位值和残留 widgets_values 中恢复；
+ * - 缺失的 clip_name/unet_name/vae_name/lora_name/value 从残留 widgets_values 中恢复。
+ * 返回是否发生过修复。
+ */
+export function repairLegacyMisalignedGraph(
+  graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+): boolean {
+  let repaired = false
+  for (const node of Object.values(graph)) {
+    const inputs = node.inputs
+    const leftovers = Array.isArray(inputs.widgets_values)
+      ? (inputs.widgets_values as unknown[])
+      : []
+    if (
+      node.class_type === 'CLIPLoader' &&
+      typeof inputs.type === 'string' &&
+      CLIP_TYPE_FILENAME_RE.test(inputs.type)
+    ) {
+      const strings = [inputs.type, inputs.device, ...leftovers].filter(
+        (s): s is string => typeof s === 'string',
+      )
+      const filename = strings.find((s) => CLIP_TYPE_FILENAME_RE.test(s))
+      const typeValue = strings.find(
+        (s) => !CLIP_TYPE_FILENAME_RE.test(s) && !['default', 'cpu', 'cuda'].includes(s),
+      )
+      const deviceValue = strings.find((s) => ['default', 'cpu', 'cuda'].includes(s))
+      if (filename) {
+        inputs.clip_name = filename
+        inputs.type = typeValue ?? 'stable_diffusion'
+        inputs.device = deviceValue ?? 'default'
+        repaired = true
+      }
+    }
+    for (const key of ['clip_name', 'unet_name', 'vae_name', 'lora_name'] as const) {
+      if (inputs[key] === undefined) {
+        const v = leftovers.find((x) => typeof x === 'string')
+        if (v !== undefined) {
+          inputs[key] = v
+          repaired = true
+        }
+      }
+    }
+    if (inputs.value === undefined) {
+      const v = leftovers.find((x) => typeof x === 'number')
+      if (v !== undefined) {
+        inputs.value = v
+        repaired = true
+      }
+    }
+  }
+  return repaired
+}
+
+/** 提交前检查模板是否为旧版本（参数错位）：先自动修复，仍错位则给出明确指引而不是等 ComfyUI 400 */
+function assertFreshTemplate(
+  template: { id: string; name: string; graphJson: string },
+): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
+  const graph = JSON.parse(template.graphJson) as Record<
+    string,
+    { class_type: string; inputs: Record<string, unknown> }
+  >
+  repairLegacyMisalignedGraph(graph)
+  if (isStaleBrokenTemplate(graph)) {
+    throw new Error(
+      `当前使用的工作流模板「${template.name}」是旧版本（导入时参数错位，例如 CLIPLoader 的 type 字段是模型文件名）。` +
+        `请在「设置 → ComfyUI 媒体」中按生成类型选择重新导入后的新模板（参考生视频选「参考生视频模板」，文生视频选「文生视频模板」等）；` +
+        `如果下拉列表里没有新模板，请先在模板管理中导入并点击「保存模板」。`,
+    )
+  }
+  return graph
+}
+
+/** 旧版坏模板无法完全自愈时，精确定位仍缺失的关键输入，而不是等 ComfyUI 400 */
+function assertNoMissingCriticalInputs(
+  graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+): void {
+  const required: Record<string, string[]> = {
+    PrimitiveFloat: ['value'],
+    PrimitiveInt: ['value'],
+    VAELoader: ['vae_name'],
+    UNETLoader: ['unet_name'],
+    CLIPLoader: ['clip_name'],
+    LoraLoaderModelOnly: ['lora_name'],
+  }
+  const missing: string[] = []
+  for (const [id, node] of Object.entries(graph)) {
+    const keys = required[node.class_type]
+    if (!keys) continue
+    for (const key of keys) {
+      if (node.inputs[key] === undefined) {
+        missing.push(`节点 ${id}（${node.class_type}）的 ${key}`)
+      }
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `模板仍缺少关键输入：${missing.join('、')}。旧版展开图无法完全自愈，请用 ComfyUI 导出的原始工作流 JSON（nodes/links 格式）重新导入。`,
+    )
+  }
+}
+
 /** 按节点 id 注入 prompt/negative/seed；缺失 prompt 节点时回退到占位符扫描或首个 CLIPTextEncode */
+function writeScalarInput(
+  graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+  nodeId: string,
+  key: string,
+  value: string | number,
+): boolean {
+  const node = graph[nodeId]
+  if (!node) return false
+  const input = node.inputs[key]
+  if (
+    input === undefined ||
+    typeof input === 'string' ||
+    typeof input === 'number' ||
+    typeof input === 'boolean'
+  ) {
+    node.inputs[key] = value
+    return true
+  }
+  // 输入是链路引用（子图展开后的 Primitive* 提供值）：沿引用写入目标节点的 value
+  if (Array.isArray(input) && typeof input[0] === 'string') {
+    const target = graph[input[0]]
+    if (!target) return false
+    const targetValue = target.inputs.value
+    if (
+      targetValue === undefined ||
+      typeof targetValue === 'string' ||
+      typeof targetValue === 'number'
+    ) {
+      target.inputs.value = value
+      return true
+    }
+    return writeScalarInput(graph, input[0], 'value', value)
+  }
+  return false
+}
+
+function isRefLike(value: unknown): boolean {
+  return Array.isArray(value) && typeof value[0] === 'string'
+}
+
+/** 在图中重新定位提示词节点：优先 CLIPTextEncode，其次带 prompt/text 输入（字符串或引用）的节点 */
+function findPromptNodeId(
+  graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+): string | undefined {
+  return (
+    Object.keys(graph).find((id) => graph[id].class_type.includes('CLIPTextEncode')) ??
+    Object.keys(graph).find(
+      (id) =>
+        typeof graph[id].inputs.prompt === 'string' || isRefLike(graph[id].inputs.prompt),
+    ) ??
+    Object.keys(graph).find(
+      (id) =>
+        typeof graph[id].inputs.text === 'string' || isRefLike(graph[id].inputs.text),
+    )
+  )
+}
+
 function injectIntoNodes(
   graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
   prompt: string,
@@ -452,9 +716,10 @@ function injectIntoNodes(
 ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
   let promptNodeId = ids.promptNodeId
   let promptInjected = false
-  if (promptNodeId) {
-    promptInjected = true
-  } else {
+  // 模板里记录的节点可能已失效（如重新转换后 id 变化）：按实际图修正
+  if (promptNodeId && !graph[promptNodeId]) promptNodeId = undefined
+
+  if (!promptNodeId) {
     for (const node of Object.values(graph)) {
       for (const key of Object.keys(node.inputs)) {
         const value = node.inputs[key]
@@ -468,35 +733,83 @@ function injectIntoNodes(
         }
       }
     }
-    if (!promptInjected) {
-      promptNodeId = Object.keys(graph).find((id) =>
-        graph[id].class_type.includes('CLIPTextEncode'),
-      )
-    }
+  }
+  if (!promptNodeId && !promptInjected) {
+    promptNodeId = findPromptNodeId(graph)
   }
 
   if (promptNodeId && graph[promptNodeId]) {
     const node = graph[promptNodeId]
     // 自定义节点（如 MiniMaxH3ImageToVideo）用 prompt 字段，CLIPTextEncode 用 text 字段
-    if (typeof node.inputs.prompt === 'string') node.inputs.prompt = prompt
-    else node.inputs.text = prompt
+    const promptInput = node.inputs.prompt
+    const textInput = node.inputs.text
+    if (typeof promptInput === 'string' || Array.isArray(promptInput)) {
+      writeScalarInput(graph, promptNodeId, 'prompt', prompt)
+    } else if (typeof textInput === 'string' || Array.isArray(textInput) || textInput === undefined) {
+      writeScalarInput(graph, promptNodeId, 'text', prompt)
+    } else {
+      node.inputs.text = prompt
+    }
+    promptInjected = true
   } else if (!promptInjected) {
     throw new Error('工作流缺少提示词节点，请重新导入模板或检查模板。')
   }
 
-  if (ids.negativeNodeId && graph[ids.negativeNodeId]) {
-    const node = graph[ids.negativeNodeId]
+  let negativeNodeId = ids.negativeNodeId
+  if (negativeNodeId && !graph[negativeNodeId]) negativeNodeId = undefined
+  if (!negativeNodeId) {
+    // 兜底：带 negative_prompt 输入的节点，或除提示词节点外的第二个 CLIPTextEncode
+    negativeNodeId =
+      Object.keys(graph).find(
+        (id) =>
+          typeof graph[id].inputs.negative_prompt === 'string' ||
+          isRefLike(graph[id].inputs.negative_prompt),
+      ) ??
+      // 仅当已确定提示词节点时才找“第二个 CLIPTextEncode”，避免把提示词节点误当负向节点
+      (promptNodeId !== undefined
+        ? Object.keys(graph).find(
+            (id) => graph[id].class_type.includes('CLIPTextEncode') && id !== promptNodeId,
+          )
+        : undefined)
+  }
+  if (negativeNodeId && graph[negativeNodeId]) {
+    const node = graph[negativeNodeId]
     // 自定义节点（如 MiniMax 系列）用 negative_prompt 字段，CLIPTextEncode 用 text 字段
-    if (typeof node.inputs.negative_prompt === 'string') {
-      node.inputs.negative_prompt = negativePrompt ?? ''
+    const negInput = node.inputs.negative_prompt
+    const textInput = node.inputs.text
+    if (typeof negInput === 'string' || Array.isArray(negInput)) {
+      writeScalarInput(graph, negativeNodeId, 'negative_prompt', negativePrompt ?? '')
+    } else if (typeof textInput === 'string' || Array.isArray(textInput) || textInput === undefined) {
+      writeScalarInput(graph, negativeNodeId, 'text', negativePrompt ?? '')
     } else {
       node.inputs.text = negativePrompt ?? ''
     }
   }
-  if (ids.seedNodeId && graph[ids.seedNodeId]) {
-    const node = graph[ids.seedNodeId]
-    if (typeof node.inputs.noise_seed === 'number') node.inputs.noise_seed = seed
-    else node.inputs.seed = seed
+  let seedNodeId = ids.seedNodeId
+  if (seedNodeId && !graph[seedNodeId]) seedNodeId = undefined
+  if (!seedNodeId) {
+    // 兜底：带 noise_seed/seed 输入（数字或引用）的节点
+    seedNodeId =
+      Object.keys(graph).find(
+        (id) =>
+          typeof graph[id].inputs.noise_seed === 'number' ||
+          isRefLike(graph[id].inputs.noise_seed),
+      ) ??
+      Object.keys(graph).find(
+        (id) => typeof graph[id].inputs.seed === 'number' || isRefLike(graph[id].inputs.seed),
+      )
+  }
+  if (seedNodeId && graph[seedNodeId]) {
+    const node = graph[seedNodeId]
+    const noiseSeed = node.inputs.noise_seed
+    const seedInput = node.inputs.seed
+    if (typeof noiseSeed === 'number' || Array.isArray(noiseSeed)) {
+      writeScalarInput(graph, seedNodeId, 'noise_seed', seed)
+    } else if (typeof seedInput === 'number' || Array.isArray(seedInput) || seedInput === undefined) {
+      writeScalarInput(graph, seedNodeId, 'seed', seed)
+    } else {
+      node.inputs.seed = seed
+    }
   }
   return graph
 }
@@ -743,7 +1056,9 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      throw new Error(`ComfyUI 提交失败（${res.status}）：${text.slice(0, 200)}`)
+      const readable = describeValidationError(text)
+      const raw = readable === text ? '' : `\n原始响应：${text}`
+      throw new Error(`ComfyUI 提交失败（${res.status}）：${readable}${raw}`)
     }
     const data = (await res.json()) as { prompt_id?: string }
     const promptId = data.prompt_id
@@ -775,19 +1090,17 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
   ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
     if (templateId) {
       const template = getWorkflowTemplate(templateId)
-      if (!template) {
-        throw new Error('ComfyUI 工作流模板不存在，请在「设置」中重新选择或导入模板。')
-      }
-      const graph = JSON.parse(template.graphJson) as Record<
-        string,
-        { class_type: string; inputs: Record<string, unknown> }
-      >
-      const injected = injectIntoNodes(graph, prompt, negativePrompt, seed, {
-        promptNodeId: template.promptNodeId,
-        negativeNodeId: template.negativeNodeId,
+    if (!template) {
+      throw new Error('ComfyUI 工作流模板不存在，请在「设置」中重新选择或导入模板。')
+    }
+    const graph = assertFreshTemplate(template)
+    const injected = injectIntoNodes(stripUiOnlyNodes(graph), prompt, negativePrompt, seed, {
+      promptNodeId: template.promptNodeId,
+      negativeNodeId: template.negativeNodeId,
         seedNodeId: template.seedNodeId,
       })
       applyDynamicInputs(injected, { inputImage, duration, lastFrame })
+      assertNoMissingCriticalInputs(injected)
       return injected
     }
     // 无模板：图片用内置文生图模板；视频明确报错
@@ -814,15 +1127,13 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     if (!template) {
       throw new Error('ComfyUI 图生图工作流模板不存在，请在「设置」中重新导入模板。')
     }
-    const graph = JSON.parse(template.graphJson) as Record<
-      string,
-      { class_type: string; inputs: Record<string, unknown> }
-    >
-    const injected = injectIntoNodes(graph, prompt, negativePrompt, seed, {
+    const graph = assertFreshTemplate(template)
+    const injected = injectIntoNodes(stripUiOnlyNodes(graph), prompt, negativePrompt, seed, {
       promptNodeId: template.promptNodeId,
       negativeNodeId: template.negativeNodeId,
       seedNodeId: template.seedNodeId,
     })
+    assertNoMissingCriticalInputs(injected)
     let replaced = false
     for (const node of Object.values(injected)) {
       for (const key of Object.keys(node.inputs)) {
@@ -900,7 +1211,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     })
     if (!uploadRes.ok) {
       const text = await uploadRes.text().catch(() => '')
-      throw new Error(`ComfyUI 上传参考图失败（${uploadRes.status}）：${text.slice(0, 200)}`)
+      throw new Error(`ComfyUI 上传参考图失败（${uploadRes.status}）：${text}`)
     }
     const data = (await uploadRes.json()) as { name?: string; subfolder?: string; type?: string }
     if (!data.name) throw new Error('ComfyUI 上传参考图未返回文件名')

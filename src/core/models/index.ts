@@ -4,7 +4,15 @@ export type { Character } from './character'
 export { ScriptSchema, SceneSchema, SceneArtModeSchema, BeatSchema } from './script'
 export type { Script, Scene, Beat, SceneArtMode } from './script'
 
-export { ShotSchema, CameraSchema, ShotTypeSchema, ShotSizeSchema, AngleSchema, MoveSchema } from './shot'
+export {
+  ShotSchema,
+  CameraSchema,
+  ShotTypeSchema,
+  ShotSizeSchema,
+  AngleSchema,
+  MoveSchema,
+  VideoModeSchema,
+} from './shot'
 export type { Shot } from './shot'
 export { DEFAULT_SHOT_DURATION, MAX_SHOT_DURATION } from './shot'
 

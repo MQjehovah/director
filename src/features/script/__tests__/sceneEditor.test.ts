@@ -343,6 +343,15 @@ describe('script panel', () => {
     expect(inDialog('[data-test="ai-message"]').text()).toContain('已生成')
   })
 
+  it('编辑全局提示词（画风 / 风格）写入剧本', async () => {
+    const store = useScriptStore()
+    const w = mount(ScriptPanel)
+    await w.get('[data-test="global-prompt"]').setValue('新海诚风格，低饱和胶片质感')
+    expect(store.script?.globalContext).toBe('新海诚风格，低饱和胶片质感')
+    await w.get('[data-test="global-prompt"]').setValue('  ')
+    expect(store.script?.globalContext).toBeUndefined()
+  })
+
   it('一键切分为镜头 creates one shot per beat', async () => {
     const store = useScriptStore()
     const storyboard = useStoryboardStore()

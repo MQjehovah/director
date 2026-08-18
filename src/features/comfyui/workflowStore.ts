@@ -56,6 +56,20 @@ function isClipTextEncode(classType: string | undefined): boolean {
   return classType !== undefined && classType.includes('CLIPTextEncode')
 }
 
+/** 输入是否为指向图中现有节点的引用（子图展开后 prompt/seed 常由内部 Primitive* 提供） */
+function isRefInput(graph: WorkflowGraph, value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    typeof value[0] === 'string' &&
+    graph[value[0]] !== undefined
+  )
+}
+
+function hasStringOrRefInput(graph: WorkflowGraph, id: string, key: string): boolean {
+  const value = graph[id]?.inputs[key]
+  return typeof value === 'string' || isRefInput(graph, value)
+}
+
 function detectNodes(graph: WorkflowGraph): {
   promptNodeId?: string
   negativeNodeId?: string
@@ -85,14 +99,23 @@ function detectNodes(graph: WorkflowGraph): {
     // 优先 CLIPTextEncode；否则找任意带字符串 prompt 输入的节点（MiniMaxH3ImageToVideo 等自定义节点）
     promptNodeId =
       Object.keys(graph).find((id) => isClipTextEncode(graph[id].class_type)) ??
-      Object.keys(graph).find((id) => typeof graph[id].inputs.prompt === 'string')
+      Object.keys(graph).find((id) => hasStringOrRefInput(graph, id, 'prompt'))
   }
 
   if (negativeNodeId === undefined) {
     // 自定义/子图节点（如 MiniMax 系列）常用 negative_prompt 文本输入
     negativeNodeId = Object.keys(graph).find(
-      (id) => typeof graph[id].inputs.negative_prompt === 'string',
+      (id) => hasStringOrRefInput(graph, id, 'negative_prompt'),
     )
+  }
+
+  if (seedNodeId === undefined) {
+    // 子图展开后 seed 可能是指向内部 Primitive 的引用
+    seedNodeId =
+      Object.keys(graph).find((id) => typeof graph[id].inputs.noise_seed === 'number') ??
+      Object.keys(graph).find((id) => isRefInput(graph, graph[id].inputs.noise_seed)) ??
+      Object.keys(graph).find((id) => typeof graph[id].inputs.seed === 'number') ??
+      Object.keys(graph).find((id) => isRefInput(graph, graph[id].inputs.seed))
   }
 
   return { promptNodeId, negativeNodeId, seedNodeId }

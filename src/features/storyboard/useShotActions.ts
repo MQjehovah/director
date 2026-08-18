@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { usePluginStore } from '../../stores/pluginStore'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useJobStore } from '../../stores/jobStore'
+import { useScriptStore } from '../../stores/scriptStore'
 import type { Asset, Job, Shot } from '../../core/models'
 import type { MediaCapability } from '../../core/plugin/types'
 import { capabilityForJobType } from '../../providers/capabilities'
@@ -38,6 +39,12 @@ function recordedLastFrame(shot: Shot | undefined): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+/** 镜头显式选择的参考图 id（参考生视频：本镜头上传或取自角色/场景参考图） */
+function selectedReference(shot: Shot | undefined): string | undefined {
+  const value = shot?.metadata?.referenceImageAssetId
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
 /** 展示用资产：生成结果总是追加在 mediaAssets 末尾，取最后一项，
  * 避免 image2video（输入图 + 输出视频）把输入图误当结果展示 */
 export function displayAssetOf(shot: Shot | undefined): string | undefined {
@@ -47,6 +54,8 @@ export function displayAssetOf(shot: Shot | undefined): string | undefined {
 
 /** 计算 image2video 的首帧输入图：显式首帧优先，其次历史记录/场次场景图/mediaAssets 图片 */
 function imageInputFor(shot: Shot | undefined): string | undefined {
+  const selected = selectedReference(shot)
+  if (selected) return selected
   const recorded = recordedFirstFrame(shot)
   if (recorded) return recorded
   const historical = shot?.metadata?.inputImageAssetId
@@ -66,17 +75,27 @@ function lastFrameInputFor(shot: Shot | undefined): string | undefined {
 /**
  * 按镜头需求选择能力：
  * - image → text2image（文生图）
- * - video + 首尾帧 → firstLastFrameVideo（首尾帧生视频）
- * - video + 单帧 → image2video（参考生视频）
- * - video 无帧 → text2video（文生视频）
+ * - video 显式 videoMode → 按用户选择路由（缺参考时回退）
+ * - video 未设置 → 首尾帧/单帧/无帧自动推断
  */
 function capabilityForShot(shot: Shot | undefined): MediaCapability {
   if (!shot || shot.shotType !== 'video') return 'text2image'
   const first = imageInputFor(shot)
   const last = lastFrameInputFor(shot)
-  if (first && last) return 'firstLastFrameVideo'
-  if (first || last) return 'image2video'
-  return 'text2video'
+  switch (shot.videoMode) {
+    case 'text2video':
+      return 'text2video'
+    case 'image2video':
+      return first ? 'image2video' : 'text2video'
+    case 'firstLastFrameVideo':
+      if (first && last) return 'firstLastFrameVideo'
+      if (first || last) return 'image2video'
+      return 'text2video'
+    default:
+      if (first && last) return 'firstLastFrameVideo'
+      if (first || last) return 'image2video'
+      return 'text2video'
+  }
 }
 
 const SHOT_SIZE_LABELS: Record<string, string> = {
@@ -102,11 +121,16 @@ const MOVE_LABELS: Record<string, string> = {
 }
 
 /** 组装镜头提示词：用户画面描述 + 镜头语言（景别/机位/运镜/时长） */
-export function buildShotPrompt(shot: Shot): string {
+export function buildShotPrompt(shot: Shot, globalContext?: string): string {
   const base = shot.prompt?.trim() ?? ''
+  const prefixes: string[] = []
+  const global = globalContext?.trim()
+  if (global) prefixes.push(`风格：${global}`)
   const sceneContext = shot.metadata?.sceneContext
-  const contextPrefix =
-    typeof sceneContext === 'string' && sceneContext.trim() ? `场景：${sceneContext.trim()}，` : ''
+  if (typeof sceneContext === 'string' && sceneContext.trim()) {
+    prefixes.push(`场景：${sceneContext.trim()}`)
+  }
+  const contextPrefix = prefixes.length > 0 ? `${prefixes.join('，')}，` : ''
   const camera = shot.camera
   if (!camera) return `${contextPrefix}${base}`
   const parts: string[] = []
@@ -126,6 +150,7 @@ export function useShotActions() {
   const storyboardStore = useStoryboardStore()
   const jobStore = useJobStore()
   const pluginStore = usePluginStore()
+  const scriptStore = useScriptStore()
 
   function jobForShot(shotId: string): Job | undefined {
     const jobs = jobStore.jobsForShot(shotId)
@@ -152,7 +177,7 @@ export function useShotActions() {
     }
     if (!media) return undefined
 
-    const prompt = buildShotPrompt(shot)
+    const prompt = buildShotPrompt(shot, scriptStore.script?.globalContext)
     let providerJob: Job
     try {
       if (shot.shotType === 'video') {
@@ -163,12 +188,15 @@ export function useShotActions() {
           shotRef: shotId,
           duration: shot.camera?.duration,
         }
-        if (imageAssetId) videoParams.imageAssetId = imageAssetId
-        if (lastFrameAssetId) videoParams.lastFrameAssetId = lastFrameAssetId
+        // 显式文生视频不携带参考图/首尾帧，避免 Provider 误路由
+        if (capability !== 'text2video') {
+          if (imageAssetId) videoParams.imageAssetId = imageAssetId
+          if (lastFrameAssetId) videoParams.lastFrameAssetId = lastFrameAssetId
+        }
         providerJob = await media.generateVideo(videoParams)
         // 记录 image2video 的首帧输入图，供二次生成路由与引用
         const metadata = { ...(shot.metadata ?? {}) }
-        if (imageAssetId) {
+        if (capability !== 'text2video' && imageAssetId) {
           metadata.inputImageAssetId = imageAssetId
           metadata.firstFrameAssetId = imageAssetId
         }

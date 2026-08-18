@@ -9,8 +9,12 @@ import {
   saveWorkflowTemplate,
 } from '../comfyui/workflowStore'
 import type { WorkflowTemplate } from '../comfyui/workflowStore'
-import { saveProviderConfig, loadProviderConfig } from './httpBackendConfig'
-import { MEDIA_COMFYUI_ID } from '../../plugins/providers/media-comfyui'
+import { loadProviderConfig } from './httpBackendConfig'
+import {
+  MEDIA_COMFYUI_ID,
+  isStaleBrokenTemplate,
+  repairLegacyMisalignedGraph,
+} from '../../plugins/providers/media-comfyui'
 import { convertWorkflowJsonToApiGraph } from '../comfyui/workflowGraphConverter'
 import type { ApiWorkflowGraph, ObjectInfoNodeDef } from '../comfyui/workflowGraphConverter'
 import {
@@ -38,6 +42,15 @@ function refresh(): void {
   templates.value = listWorkflowTemplates()
 }
 
+/** 旧版本模板（导入时参数错位）：建议删除后重新导入 */
+function isStaleTemplate(t: WorkflowTemplate): boolean {
+  try {
+    return isStaleBrokenTemplate(JSON.parse(t.graphJson))
+  } catch {
+    return false
+  }
+}
+
 function configBaseUrl(): string {
   const value = loadProviderConfig(MEDIA_COMFYUI_ID)?.baseUrl
   return typeof value === 'string' ? value : ''
@@ -50,9 +63,21 @@ function importJsonText(
   objectInfo?: Record<string, ObjectInfoNodeDef>,
 ): { result?: WorkflowTemplate; error?: string; warnings: string[] } {
   const targetName = name.value.trim() || fallbackName
+  const repairWarning =
+    '检测到旧版展开图（CLIPLoader 参数错位），已自动修复并保存；建议用 ComfyUI 导出的原始工作流 JSON（nodes/links 格式）重新导入以获得完整数据。'
   const apiResult = importWorkflowGraph(text, targetName)
   if (!('error' in apiResult)) {
-    return { result: apiResult, warnings: [] }
+    let parsedResult: ApiWorkflowGraph | undefined
+    try {
+      parsedResult = JSON.parse(apiResult.graphJson) as ApiWorkflowGraph
+    } catch {
+      parsedResult = undefined
+    }
+    if (!parsedResult) return { result: apiResult, warnings: [] }
+    const repaired = repairLegacyMisalignedGraph(parsedResult)
+    const result = importWorkflowObject(targetName, parsedResult)
+    if ('error' in result) return { error: result.error, warnings: [] }
+    return { result, warnings: repaired ? [repairWarning] : [] }
   }
 
   let parsed: unknown
@@ -65,11 +90,14 @@ function importJsonText(
   if (!converted.ok || !converted.graph) {
     return { error: converted.error ?? apiResult.error, warnings: converted.warnings }
   }
+  const repaired = repairLegacyMisalignedGraph(converted.graph)
+  const warnings = [...converted.warnings]
+  if (repaired) warnings.push(repairWarning)
   const result = importWorkflowObject(targetName, converted.graph as ApiWorkflowGraph)
   if ('error' in result) {
-    return { error: result.error, warnings: converted.warnings }
+    return { error: result.error, warnings }
   }
-  return { result, warnings: converted.warnings }
+  return { result, warnings }
 }
 
 function onImport(): void {
@@ -170,13 +198,45 @@ async function onImportRemote(item: RemoteWorkflowItem): Promise<void> {
       message.value = { kind: 'error', text: error ?? '导入失败' }
       return
     }
-    name.value = result.name
-    graphJson.value = result.graphJson
-    draft.value = result
-    draftWarnings.value = warnings
+    // 拉取导入直接保存，无需再经文本框草稿二次确认
+    saveWorkflowTemplate({ ...result, name: name.value.trim() || result.name })
+    name.value = ''
+    graphJson.value = ''
+    draft.value = undefined
+    draftWarnings.value = []
+    refresh()
     message.value = {
       kind: 'success',
-      text: warnings.length > 0 ? '已从 ComfyUI 导入，但部分节点参数需要人工检查。' : '已从 ComfyUI 导入。',
+      text:
+        (warnings.length > 0 ? '已从 ComfyUI 导入并保存（部分节点参数需人工检查）；' : '已从 ComfyUI 导入并保存；') +
+        '请在「ComfyUI 媒体」Provider 配置中按生成类型选择该模板。',
+    }
+  } catch (err) {
+    message.value = { kind: 'error', text: err instanceof Error ? err.message : String(err) }
+  } finally {
+    remoteBusy.value = false
+  }
+}
+
+/** 把拉取到的原始工作流 JSON 填入文本框，便于排查转换问题或手动检查 */
+async function onViewRawRemote(item: RemoteWorkflowItem): Promise<void> {
+  message.value = undefined
+  remoteBusy.value = true
+  try {
+    const apiKey = loadProviderConfig(MEDIA_COMFYUI_ID)?.apiKey
+    const key = typeof apiKey === 'string' ? apiKey : undefined
+    const content = await fetchComfyUIWorkflowContent(remoteBaseUrl.value, item, key)
+    if (!content.ok || content.workflowJson === undefined) {
+      message.value = { kind: 'error', text: content.error ?? '获取工作流内容失败' }
+      return
+    }
+    name.value = item.name
+    graphJson.value = JSON.stringify(content.workflowJson, null, 2)
+    draft.value = undefined
+    draftWarnings.value = []
+    message.value = {
+      kind: 'info',
+      text: '已填入 ComfyUI 返回的原始工作流 JSON，可直接检查/复制，或点「导入并识别节点」转换。',
     }
   } catch (err) {
     message.value = { kind: 'error', text: err instanceof Error ? err.message : String(err) }
@@ -198,15 +258,6 @@ function onSave(): void {
 function onDelete(id: string): void {
   deleteWorkflowTemplate(id)
   refresh()
-}
-
-function onUse(id: string): void {
-  // 合并写入，避免覆盖已填写的 baseUrl/apiKey/model 等配置
-  saveProviderConfig(MEDIA_COMFYUI_ID, {
-    ...loadProviderConfig(MEDIA_COMFYUI_ID),
-    workflowTemplateId: id,
-  })
-  message.value = { kind: 'success', text: '已设为当前 ComfyUI 模板' }
 }
 </script>
 
@@ -339,6 +390,16 @@ function onUse(id: string): void {
             >
               导入
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              class="shrink-0"
+              :disabled="remoteBusy"
+              data-test="wf-remote-raw"
+              @click="onViewRawRemote(item)"
+            >
+              原始
+            </Button>
           </li>
         </ul>
         <p v-else-if="remoteMode === 'userdata'" class="text-[10px] text-ink-muted">
@@ -358,6 +419,13 @@ function onUse(id: string): void {
         >
           <div class="min-w-0">
             <span class="block truncate text-xs font-medium text-ink">{{ t.name }}</span>
+            <span
+              v-if="isStaleTemplate(t)"
+              class="block text-[10px] text-amber-300"
+              data-test="wf-stale-badge"
+            >
+              旧版本（参数错位），请删除后重新导入
+            </span>
             <span class="block truncate text-[10px] text-ink-muted">
               prompt={{ t.promptNodeId ?? '—' }}
               negative={{ t.negativeNodeId ?? '—' }}
@@ -365,7 +433,6 @@ function onUse(id: string): void {
             </span>
           </div>
           <div class="flex shrink-0 items-center gap-1.5">
-            <Button size="sm" data-test="wf-use" @click="onUse(t.id)">设为当前</Button>
             <Button size="sm" variant="ghost" data-test="wf-delete" @click="onDelete(t.id)">删除</Button>
           </div>
         </li>
