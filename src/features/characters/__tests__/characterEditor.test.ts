@@ -1,10 +1,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { DOMWrapper } from '@vue/test-utils'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import CharacterGrid from '../CharacterGrid.vue'
 import CharacterPanel from '../CharacterPanel.vue'
 import CharacterEditor from '../CharacterEditor.vue'
+import AssetPreviewOverlay from '../../shared/AssetPreviewOverlay.vue'
 import { useCharacterStore } from '../../../stores/characterStore'
 import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
@@ -61,17 +61,6 @@ function createStorageStub() {
       return assets.get(asset.id)?.url
     },
   }
-}
-
-/** Dialog 通过 Teleport 渲染到 body，需要打开弹窗后从 body 查询内部元素 */
-async function openAiDialog(w: ReturnType<typeof mount>): Promise<void> {
-  await w.get('[data-test="editor-ai-btn"]').trigger('click')
-}
-
-function inDialog(selector: string): DOMWrapper<Element> {
-  const el = document.body.querySelector(selector)
-  if (!el) throw new Error(`dialog element not found: ${selector}`)
-  return new DOMWrapper(el)
 }
 
 describe('character grid', () => {
@@ -161,72 +150,115 @@ describe('character editor', () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await openAiDialog(w)
-    await inDialog('[data-test="seed-idea"]').setValue('银发剑士')
-    await inDialog('[data-test="ai-describe"]').trigger('click')
+    await w.get('[data-test="editor-ai-btn"]').trigger('click')
+    await w.get('[data-test="seed-idea"]').setValue('银发剑士')
+    await w.get('[data-test="ai-describe"]').trigger('click')
     await flushPromises()
     expect(store.getCharacter(c.id)?.appearance).toContain('银发剑士')
+  })
+
+  it('AI 生成设定 fills bio, tags, voice and appearance from structured JSON', async () => {
+    const registry = new PluginRegistry()
+    registry.register({
+      id: 'llm-json',
+      name: 'JSON LLM',
+      kind: 'provider',
+      providerType: 'llm',
+      enabled: true,
+      instance: {
+        id: 'llm-json',
+        name: 'JSON LLM',
+        models: [],
+        async chat() {
+          return (async function* () {})()
+        },
+        async complete() {
+          return JSON.stringify({
+            name: '银发剑士',
+            bio: '不服输的银发剑士',
+            appearance: '银发蓝瞳，一身旧军装',
+            tags: ['主角', '剑士'],
+            voice: 'zh-female',
+          })
+        },
+      },
+    })
+    usePluginStore().init(registry)
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明' })
+    const w = mount(CharacterEditor, { props: { characterId: c.id } })
+    await w.get('[data-test="editor-ai-btn"]').trigger('click')
+    await w.get('[data-test="seed-idea"]').setValue('银发剑士')
+    await w.get('[data-test="ai-describe"]').trigger('click')
+    await flushPromises()
+    const updated = store.getCharacter(c.id)
+    expect(updated?.name).toBe('银发剑士')
+    expect(updated?.bio).toBe('不服输的银发剑士')
+    expect(updated?.appearance).toContain('银发蓝瞳')
+    expect(updated?.tags).toEqual(['主角', '剑士'])
+    expect(updated?.voice).toBe('zh-female')
+  })
+
+  it('删除角色 removes the character and closes the editor', async () => {
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明' })
+    const w = mount(CharacterEditor, { props: { characterId: c.id } })
+    await w.get('[data-test="delete-character"]').trigger('click')
+    expect(store.characters).toHaveLength(0)
+    expect(w.emitted('close')).toBeTruthy()
   })
 
   it('shows a message when the LLM provider is missing', async () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await openAiDialog(w)
-    await inDialog('[data-test="seed-idea"]').setValue('银发剑士')
-    await inDialog('[data-test="ai-describe"]').trigger('click')
+    await w.get('[data-test="editor-ai-btn"]').trigger('click')
+    await w.get('[data-test="seed-idea"]').setValue('银发剑士')
+    await w.get('[data-test="ai-describe"]').trigger('click')
     await flushPromises()
-    expect(inDialog('[data-test="message"]').text()).toContain('未配置')
+    expect(w.get('[data-test="ai-message"]').text()).toContain('未配置')
   })
 
-  it('AI 扩写 stores an editable image prompt', async () => {
-    initProviders(['llm'])
-    const store = useCharacterStore()
-    const c = store.addCharacter({ name: '小明', appearance: '黑发少年' })
-    const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await openAiDialog(w)
-    await inDialog('[data-test="ai-expand"]').trigger('click')
-    await flushPromises()
-    expect((inDialog('[data-test="image-prompt"]').element as HTMLTextAreaElement).value).toContain(
-      'Mock 回复',
-    )
-    expect(store.getCharacter(c.id)?.metadata.imagePrompt).toContain('Mock 回复')
-  })
-
-  it('生成立绘 creates a job and attaches the asset on completion', async () => {
+  it('参考图 ✨ 直接用角色详情生成立绘并加入参考图', async () => {
     initProviders(['media'])
     const store = useCharacterStore()
-    const c = store.addCharacter({ name: '小明', appearance: '黑发少年' })
+    const c = store.addCharacter({
+      name: '小明',
+      appearance: '黑发少年，一身旧军装',
+      bio: '不服输的都市少年',
+      tags: ['主角', '少年'],
+    })
     const jobs = useJobStore()
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await openAiDialog(w)
-    await inDialog('[data-test="gen-portrait"]').trigger('click')
+    await w.get('[data-test="ref-gen-btn"]').trigger('click')
     await flushPromises()
     expect(jobs.jobs).toHaveLength(1)
     expect(jobs.jobs[0].type).toBe('text2image')
+    // 参考图提示词包含详细描述 + 简介 + 标签
     expect(jobs.jobs[0].params.prompt).toContain('黑发少年')
+    expect(jobs.jobs[0].params.prompt).toContain('角色简介：不服输的都市少年')
+    expect(jobs.jobs[0].params.prompt).toContain('角色标签：主角、少年')
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(store.getCharacter(c.id)?.referenceImages).toHaveLength(1)
   })
 
-  it('shows a message when the media provider is missing', async () => {
+  it('未配置媒体 Provider 时点击 ✨ 给出提示', async () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    await openAiDialog(w)
-    await inDialog('[data-test="gen-portrait"]').trigger('click')
+    await w.get('[data-test="ref-gen-btn"]').trigger('click')
     await flushPromises()
-    expect(inDialog('[data-test="message"]').text()).toContain('未配置')
+    expect(w.get('[data-test="message"]').text()).toContain('未配置')
   })
 
   it('AI 辅助弹窗默认关闭，点击按钮打开', async () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
     const w = mount(CharacterEditor, { props: { characterId: c.id } })
-    expect(document.body.querySelector('[data-test="seed-idea"]')).toBeNull()
-    await openAiDialog(w)
-    expect(document.body.querySelector('[data-test="seed-idea"]')).not.toBeNull()
-    expect(inDialog('[data-test="ai-describe"]')).toBeTruthy()
+    expect(w.find('[data-test="seed-idea"]').exists()).toBe(false)
+    await w.get('[data-test="editor-ai-btn"]').trigger('click')
+    expect(w.find('[data-test="seed-idea"]').exists()).toBe(true)
+    expect(w.get('[data-test="ai-describe"]')).toBeTruthy()
   })
 
   it('上传参考图：保存到存储 Provider 并显示图片', async () => {
@@ -266,6 +298,32 @@ describe('character editor', () => {
     expect(store.getCharacter(c.id)?.referenceImages).toHaveLength(0)
   })
 
+  it('点击参考图打开放大预览浮层', async () => {
+    initProviders(['storage'])
+    const store = useCharacterStore()
+    const c = store.addCharacter({ name: '小明' })
+    mount(AssetPreviewOverlay)
+    const w = mount(CharacterEditor, { props: { characterId: c.id } })
+
+    const input = w.get<HTMLInputElement>('[data-test="ref-upload-input"]')
+    const file = new File(['fake-image'], 'cat.png', { type: 'image/png' })
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+
+    const imgs = w.findAll('[data-test="ref-image"]')
+    expect(imgs).toHaveLength(1)
+    await imgs[0].trigger('click')
+    await flushPromises()
+
+    const overlay = document.body.querySelector('[data-test="asset-preview-overlay"]')
+    expect(overlay).not.toBeNull()
+    const img = document.body.querySelector('[data-test="asset-preview-image"]')
+    expect(img?.getAttribute('src')).toBe(
+      `blob:stub/${store.getCharacter(c.id)?.referenceImages[0]}`,
+    )
+  })
+
   it('删除参考图：从角色移除并同步 store', async () => {
     const store = useCharacterStore()
     const c = store.addCharacter({ name: '小明' })
@@ -291,13 +349,51 @@ describe('useCharacterFeatures', () => {
     initProviders(['llm'])
     const res = await useCharacterFeatures().generateCharacterDescription('银发剑士')
     expect(res.ok).toBe(true)
-    if (res.ok) expect(res.text).toContain('银发剑士')
+    if (res.ok) expect(res.data?.appearance).toContain('银发剑士')
+  })
+
+  it('generateCharacterDescription parses JSON into bio/tags/voice', async () => {
+    const registry = new PluginRegistry()
+    registry.register({
+      id: 'llm-json',
+      name: 'JSON LLM',
+      kind: 'provider',
+      providerType: 'llm',
+      enabled: true,
+      instance: {
+        id: 'llm-json',
+        name: 'JSON LLM',
+        models: [],
+        async chat() {
+          return (async function* () {})()
+        },
+        async complete() {
+          return JSON.stringify({
+            name: '银发剑士',
+            bio: '不服输的银发剑士',
+            appearance: '银发蓝瞳',
+            tags: ['主角', '剑士'],
+            voice: 'zh-female',
+          })
+        },
+      },
+    })
+    usePluginStore().init(registry)
+    const res = await useCharacterFeatures().generateCharacterDescription('银发剑士')
+    expect(res.ok).toBe(true)
+    expect(res.data).toMatchObject({
+      name: '银发剑士',
+      bio: '不服输的银发剑士',
+      appearance: '银发蓝瞳',
+      tags: ['主角', '剑士'],
+      voice: 'zh-female',
+    })
   })
 
   it('generateCharacterDescription reports an error when LLM is missing', async () => {
     const res = await useCharacterFeatures().generateCharacterDescription('银发剑士')
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.error.length).toBeGreaterThan(0)
+    if (!res.ok) expect(res.error?.length ?? 0).toBeGreaterThan(0)
   })
 
   it('expandReferencePrompt expands a description when LLM is available', async () => {

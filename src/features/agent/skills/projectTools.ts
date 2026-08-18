@@ -100,8 +100,14 @@ export function createProjectTools(): AgentTool[] {
           const idea = (args.idea ?? '').trim()
           if (idea) {
             const res = await useCharacterFeatures().generateCharacterDescription(idea)
-            if (res.ok) {
-              characterStore.updateCharacter(character.id, { appearance: res.text })
+            if (res.ok && res.data) {
+              const d = res.data
+              characterStore.updateCharacter(character.id, {
+                ...(d.bio !== undefined ? { bio: d.bio } : {}),
+                ...(d.appearance !== undefined ? { appearance: d.appearance } : {}),
+                ...(d.tags !== undefined ? { tags: d.tags } : {}),
+                ...(d.voice !== undefined ? { voice: d.voice } : {}),
+              })
             }
           }
           return {

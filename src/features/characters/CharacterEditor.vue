@@ -4,7 +4,8 @@ import { useCharacterStore } from '../../stores/characterStore'
 import { usePluginStore } from '../../stores/pluginStore'
 import { useCharacterFeatures } from './useCharacterFeatures'
 import { useAssetUrls } from '../shared/useAssetUrls'
-import { Button, Dialog, Input, Textarea } from '../../components/ui'
+import { useAssetPreview } from '../shared/assetPreview'
+import { Button, Input, Textarea } from '../../components/ui'
 import type { Character } from '../../core/models'
 
 const props = defineProps<{ characterId: string }>()
@@ -17,12 +18,13 @@ const store = useCharacterStore()
 const pluginStore = usePluginStore()
 const features = useCharacterFeatures()
 const { resolveAsset, urlOf } = useAssetUrls()
+const { openPreview } = useAssetPreview()
 
 const character = computed(() => store.getCharacter(props.characterId))
 
-const aiOpen = ref(false)
+const aiInputOpen = ref(false)
 const seedIdea = ref('')
-const imagePrompt = ref((character.value?.metadata.imagePrompt as string | undefined) ?? '')
+const aiMessage = ref('')
 const message = ref('')
 const uploadMessage = ref('')
 const busy = ref(false)
@@ -67,18 +69,6 @@ function setLoraWeight(value: string): void {
   })
 }
 
-function onImagePromptChange(value: string): void {
-  imagePrompt.value = value
-  if (!character.value) return
-  const prompt = value.trim()
-  store.updateCharacter(character.value.id, {
-    metadata: {
-      ...(character.value.metadata ?? {}),
-      ...(prompt ? { imagePrompt: prompt } : { imagePrompt: undefined }),
-    },
-  })
-}
-
 function removeReferenceImage(id: string): void {
   if (!character.value) return
   setField({
@@ -86,6 +76,16 @@ function removeReferenceImage(id: string): void {
   })
   uploadMessage.value = '已删除参考图。'
   void pluginStore.storageProvider?.revokeAssetUrl?.(id)
+}
+
+function onDeleteCharacter(): void {
+  const c = character.value
+  if (!c) return
+  for (const id of c.referenceImages) {
+    void pluginStore.storageProvider?.revokeAssetUrl?.(id)
+  }
+  store.removeCharacter(c.id)
+  emit('close')
 }
 
 async function onUploadFiles(e: Event): Promise<void> {
@@ -117,44 +117,28 @@ async function onUploadFiles(e: Event): Promise<void> {
 }
 
 async function onGenerateDescription(): Promise<void> {
-  message.value = ''
+  aiMessage.value = ''
   if (!character.value) return
   const idea = seedIdea.value.trim()
   if (!idea) {
-    message.value = '请先填写灵感关键词。'
+    aiMessage.value = '请先填写角色描述。'
     return
   }
   busy.value = true
   try {
     const res = await features.generateCharacterDescription(idea)
-    if (res.ok) {
-      setField({ appearance: res.text })
-      message.value = '已生成角色设定，可在「外貌描述」中查看与修改。'
+    if (res.ok && res.data) {
+      const d = res.data
+      setField({
+        ...(d.name !== undefined && d.name.trim().length > 0 ? { name: d.name.trim() } : {}),
+        ...(d.bio !== undefined ? { bio: d.bio } : {}),
+        ...(d.appearance !== undefined ? { appearance: d.appearance } : {}),
+        ...(d.tags !== undefined ? { tags: d.tags } : {}),
+        ...(d.voice !== undefined ? { voice: d.voice } : {}),
+      })
+      aiMessage.value = '已生成角色设定（名称 / 简介 / 标签 / 音色 / 详细描述）。'
     } else {
-      message.value = res.error
-    }
-  } finally {
-    busy.value = false
-  }
-}
-
-async function onExpandPrompt(): Promise<void> {
-  message.value = ''
-  const c = character.value
-  if (!c) return
-  const base = c.appearance?.trim()
-  if (!base) {
-    message.value = '请先填写外貌描述，再扩写参考图提示词。'
-    return
-  }
-  busy.value = true
-  try {
-    const res = await features.expandReferencePrompt(base)
-    if (res.ok) {
-      imagePrompt.value = res.text
-      setField({ metadata: { ...(c.metadata ?? {}), imagePrompt: res.text } })
-    } else {
-      message.value = res.error
+      aiMessage.value = res.error ?? '角色设定生成失败。'
     }
   } finally {
     busy.value = false
@@ -182,7 +166,7 @@ async function onGeneratePortrait(): Promise<void> {
     v-if="character"
     class="flex w-[28rem] shrink-0 flex-col overflow-y-auto border-l border-edge bg-panel"
   >
-    <header class="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
+    <header class="relative flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
       <h2 class="text-sm font-semibold text-ink">角色详情</h2>
       <div class="flex items-center gap-1">
         <button
@@ -191,7 +175,7 @@ async function onGeneratePortrait(): Promise<void> {
           title="AI 辅助"
           data-test="editor-ai-btn"
           class="rounded-md px-1.5 py-1 text-sm text-amber-300/90 transition-colors hover:bg-zinc-800 hover:text-amber-300"
-          @click="aiOpen = true"
+          @click="aiInputOpen = !aiInputOpen"
         >
           ✨
         </button>
@@ -206,6 +190,33 @@ async function onGeneratePortrait(): Promise<void> {
         </button>
       </div>
     </header>
+
+    <div
+      v-if="aiInputOpen"
+      class="absolute right-3 top-12 z-20 flex items-center gap-1.5 rounded-lg border border-edge bg-panel p-1.5 shadow-2xl"
+      data-test="ai-input-panel"
+    >
+      <Input
+        v-model="seedIdea"
+        class="!h-7 w-44 !text-xs"
+        placeholder="描述角色"
+        data-test="seed-idea"
+        @keyup.enter="onGenerateDescription"
+      />
+      <Button
+        variant="primary"
+        size="sm"
+        class="shrink-0 !h-7"
+        data-test="ai-describe"
+        :disabled="busy"
+        @click="onGenerateDescription"
+      >
+        生成
+      </Button>
+      <p v-if="aiMessage" class="text-[10px] text-amber-300" data-test="ai-message">
+        {{ aiMessage }}
+      </p>
+    </div>
 
     <div class="flex flex-col gap-4 p-4">
       <label class="block text-xs font-medium text-ink-muted">
@@ -245,8 +256,8 @@ async function onGeneratePortrait(): Promise<void> {
         <Textarea
           class="mt-1"
           :model-value="character.appearance ?? ''"
-          :rows="5"
-          placeholder="角色的外貌、穿着、气质等"
+          :rows="8"
+          placeholder="身高体型、脸型五官、发色发型、瞳色、肤色、服装穿搭、配饰、气质神态、标志性特征等，越详细越有助于生成立绘"
           data-test="appearance"
           @update:model-value="setField({ appearance: $event })"
         />
@@ -282,16 +293,30 @@ async function onGeneratePortrait(): Promise<void> {
       </div>
 
       <div class="flex flex-col gap-2">
-        <span class="text-xs font-medium text-ink-muted">参考图</span>
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-medium text-ink-muted">参考图</span>
+          <button
+            type="button"
+            aria-label="AI 生成立绘"
+            title="用角色详情生成立绘"
+            data-test="ref-gen-btn"
+            class="rounded-md px-1.5 py-0.5 text-sm text-amber-300/90 transition-colors hover:bg-zinc-800 hover:text-amber-300 disabled:opacity-40"
+            :disabled="busy"
+            @click="onGeneratePortrait"
+          >
+            ✨
+          </button>
+        </div>
         <div class="flex flex-wrap gap-2">
           <template v-for="r in character.referenceImages" :key="r">
             <div class="group relative" data-test="ref-item">
               <img
                 v-if="urlOf(r)"
                 :src="urlOf(r)"
-                class="h-20 w-20 rounded-md border border-edge bg-zinc-800 object-cover"
+                class="h-20 w-20 cursor-zoom-in rounded-md border border-edge bg-zinc-800 object-cover"
                 alt="参考图"
                 data-test="ref-image"
+                @click="openPreview(urlOf(r)!, 'image', character.name)"
               />
               <div
                 v-else
@@ -332,67 +357,19 @@ async function onGeneratePortrait(): Promise<void> {
         <p v-if="uploadMessage" class="text-xs text-amber-300" data-test="upload-message">
           {{ uploadMessage }}
         </p>
-      </div>
-    </div>
-
-    <Dialog
-      :open="aiOpen"
-      title="AI 辅助"
-      @update:open="aiOpen = $event"
-    >
-      <div class="flex flex-col gap-5">
-        <section class="flex flex-col gap-2">
-          <h3 class="text-xs font-semibold text-ink">AI 生成角色信息</h3>
-          <div class="flex gap-2">
-            <Input v-model="seedIdea" placeholder="灵感关键词，例如：银发剑士" data-test="seed-idea" />
-            <Button
-              variant="primary"
-              size="sm"
-              class="shrink-0"
-              data-test="ai-describe"
-              :disabled="busy"
-              @click="onGenerateDescription"
-            >
-              生成设定
-            </Button>
-          </div>
-          <p class="text-xs text-ink-muted">生成结果会填入「外貌描述」，可随时手动修改。</p>
-        </section>
-
-        <section class="flex flex-col gap-2">
-          <h3 class="text-xs font-semibold text-ink">AI 生成角色参考图</h3>
-          <Textarea
-            :model-value="imagePrompt"
-            :rows="4"
-            placeholder="参考图提示词（可先 AI 扩写再手动调整）"
-            data-test="image-prompt"
-            @update:model-value="onImagePromptChange"
-          />
-          <div class="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              data-test="ai-expand"
-              :disabled="busy"
-              @click="onExpandPrompt"
-            >
-              AI 扩写提示词
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              data-test="gen-portrait"
-              :disabled="busy"
-              @click="onGeneratePortrait"
-            >
-              生成立绘
-            </Button>
-          </div>
-          <p class="text-xs text-ink-muted">生成的立绘完成后会自动加入参考图。</p>
-        </section>
-
         <p v-if="message" class="text-xs text-amber-300" data-test="message">{{ message }}</p>
       </div>
-    </Dialog>
+
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-red-300"
+        data-test="delete-character"
+        @click="onDeleteCharacter"
+      >
+        删除角色
+      </Button>
+    </div>
+
   </aside>
 </template>

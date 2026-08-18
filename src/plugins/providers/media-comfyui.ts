@@ -476,7 +476,18 @@ function describeValidationError(text: string): string {
     const parts: string[] = []
     for (const [nodeId, err] of Object.entries(nodeErrors)) {
       const messages = (err?.errors ?? [])
-        .map((e) => e?.message || e?.details || e?.type)
+        .map((e) => {
+          // 通用 message（如 Required input is missing）附上 details 里的输入名
+          if (
+            typeof e?.message === 'string' &&
+            typeof e?.details === 'string' &&
+            e.details &&
+            /required input is missing|value not in list/i.test(e.message)
+          ) {
+            return `${e.message} (${e.details})`
+          }
+          return e?.message || e?.details || e?.type
+        })
         .filter((m): m is string => typeof m === 'string' && m.length > 0)
       if (messages.length > 0) parts.push(`节点 ${nodeId}：${messages.join('；')}`)
     }
@@ -597,6 +608,18 @@ export function repairLegacyMisalignedGraph(
         repaired = true
       }
     }
+    if (SWITCH_NODE_TYPES.has(node.class_type)) {
+      const branches: Array<['on_false', 'on_true'] | ['on_true', 'on_false']> = [
+        ['on_false', 'on_true'],
+        ['on_true', 'on_false'],
+      ]
+      for (const [from, to] of branches) {
+        if (inputs[to] === undefined && inputs[from] !== undefined) {
+          inputs[to] = inputs[from]
+          repaired = true
+        }
+      }
+    }
   }
   return repaired
 }
@@ -623,6 +646,7 @@ function assertFreshTemplate(
 /** 旧版坏模板无法完全自愈时，精确定位仍缺失的关键输入，而不是等 ComfyUI 400 */
 function assertNoMissingCriticalInputs(
   graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+  label?: string,
 ): void {
   const required: Record<string, string[]> = {
     PrimitiveFloat: ['value'],
@@ -631,6 +655,7 @@ function assertNoMissingCriticalInputs(
     UNETLoader: ['unet_name'],
     CLIPLoader: ['clip_name'],
     LoraLoaderModelOnly: ['lora_name'],
+    ComfySwitchNode: ['switch', 'on_false', 'on_true'],
   }
   const missing: string[] = []
   for (const [id, node] of Object.entries(graph)) {
@@ -644,7 +669,8 @@ function assertNoMissingCriticalInputs(
   }
   if (missing.length > 0) {
     throw new Error(
-      `模板仍缺少关键输入：${missing.join('、')}。旧版展开图无法完全自愈，请用 ComfyUI 导出的原始工作流 JSON（nodes/links 格式）重新导入。`,
+      `模板${label ? `「${label}」` : ''}仍缺少关键输入：${missing.join('、')}。` +
+        `旧版展开图无法完全自愈，请用 ComfyUI 导出的原始工作流 JSON（nodes/links 格式）重新导入。`,
     )
   }
 }
@@ -1164,7 +1190,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       seedNodeId: template.seedNodeId,
     })
       applyDynamicInputs(injected, { inputImage, duration, lastFrame })
-      assertNoMissingCriticalInputs(injected)
+      assertNoMissingCriticalInputs(injected, template.name)
       return injected
     }
     // 无模板：图片用内置文生图模板；视频明确报错
@@ -1204,7 +1230,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       negativeNodeId: template.negativeNodeId,
       seedNodeId: template.seedNodeId,
     })
-    assertNoMissingCriticalInputs(injected)
+    assertNoMissingCriticalInputs(injected, template.name)
     let replaced = false
     for (const node of Object.values(injected)) {
       for (const key of Object.keys(node.inputs)) {

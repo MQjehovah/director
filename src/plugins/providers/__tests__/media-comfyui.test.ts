@@ -757,6 +757,41 @@ describe('media-comfyui provider', () => {
     )
   })
 
+  it('repairs a stale expanded graph whose ComfySwitchNode lacks on_true before submitting', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-switch-broken',
+      name: '缺on_true模板',
+      graphJson: JSON.stringify({
+        '238:233': {
+          class_type: 'ComfySwitchNode',
+          inputs: { switch: false, on_false: ['238:231', 0] },
+        },
+        '238:231': { class_type: 'UNETLoader', inputs: { unet_name: 'x' } },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-switch-broken',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pbroken' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: 'x' })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    // 旧版展开图缺失 on_true 时，从 on_false 补齐，使开关退化为直通
+    expect(graph['238:233'].inputs.on_true).toEqual(['238:231', 0])
+    expect(graph['238:233'].inputs.on_false).toEqual(['238:231', 0])
+  })
+
   it('injects negative prompt into a custom node negative_prompt field', async () => {
     saveWorkflowTemplate({
       id: 'tpl-custom-neg',

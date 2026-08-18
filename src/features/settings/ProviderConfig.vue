@@ -36,6 +36,9 @@ const config = reactive<ProviderConfig>({
   ...loadProviderConfig(props.provider.id),
 })
 
+/** 模板列表版本：模板管理器导入/删除后自增，触发模板下拉框重算 */
+const templatesVersion = ref(0)
+
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
@@ -122,10 +125,13 @@ const FIELD_META: Record<
 
 const fields = computed<ProviderConfigField[]>(() => props.provider.configFields ?? [])
 
-const templateOptions = computed<SelectOption[]>(() => [
-  { value: '', label: '默认内置模板' },
-  ...listWorkflowTemplates().map((t) => ({ value: t.id, label: t.name })),
-])
+const templateOptions = computed<SelectOption[]>(() => {
+  void templatesVersion.value
+  return [
+    { value: '', label: '默认内置模板' },
+    ...listWorkflowTemplates().map((t) => ({ value: t.id, label: t.name })),
+  ]
+})
 
 const capabilityChips = computed<MediaCapability[]>(() =>
   (props.provider.capabilities ?? []).filter(
@@ -288,7 +294,7 @@ function setActive(): void {
         该插件无需额外配置。
       </p>
 
-      <WorkflowTemplateManager v-if="isComfyUi" />
+      <WorkflowTemplateManager v-if="isComfyUi" @changed="templatesVersion += 1" />
     </div>
   </div>
 </template>

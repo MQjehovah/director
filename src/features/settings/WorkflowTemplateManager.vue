@@ -29,6 +29,8 @@ import {
 } from '../comfyui/comfyuiWorkflowFetcher'
 import type { RemoteWorkflowItem } from '../comfyui/comfyuiWorkflowFetcher'
 
+const emit = defineEmits<{ (e: 'changed'): void }>()
+
 const name = ref('')
 const graphJson = ref('')
 const draft = ref<WorkflowTemplate | undefined>(undefined)
@@ -56,6 +58,12 @@ const remoteMode = ref<'api' | 'userdata' | 'none'>('none')
 
 function refresh(): void {
   templates.value = listWorkflowTemplates()
+}
+
+/** 模板列表变化后通知父级（如 Provider 配置中的模板下拉框）刷新 */
+function refreshAndNotify(): void {
+  refresh()
+  emit('changed')
 }
 
 /** 旧版本模板（导入时参数错位）：建议删除后重新导入 */
@@ -224,7 +232,7 @@ async function onImportRemote(item: RemoteWorkflowItem): Promise<void> {
     graphJson.value = ''
     draft.value = undefined
     draftWarnings.value = []
-    refresh()
+    refreshAndNotify()
     message.value = {
       kind: 'success',
       text:
@@ -245,12 +253,12 @@ function onSave(): void {
   graphJson.value = ''
   name.value = ''
   message.value = { kind: 'success', text: '模板已保存' }
-  refresh()
+  refreshAndNotify()
 }
 
 function onDelete(id: string): void {
   deleteWorkflowTemplate(id)
-  refresh()
+  refreshAndNotify()
 }
 
 function paramKey(p: WorkflowParameter): string {
@@ -292,7 +300,7 @@ function saveParamEditor(): void {
   if (!editor) return
   saveWorkflowTemplate({ ...editor.template, parameterOverrides: { ...editor.draft } })
   paramEditor.value = undefined
-  refresh()
+  refreshAndNotify()
   message.value = { kind: 'success', text: '参数已保存' }
 }
 </script>

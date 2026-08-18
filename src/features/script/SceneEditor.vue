@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useScriptStore } from '../../stores/scriptStore'
 import { usePluginStore } from '../../stores/pluginStore'
 import { useAssetUrls } from '../shared/useAssetUrls'
+import { useAssetPreview } from '../shared/assetPreview'
 import { useScriptFeatures } from './useScriptFeatures'
 import { Button, Input, Select, Textarea } from '../../components/ui'
 import type { SelectOption } from '../../components/ui'
@@ -15,6 +16,7 @@ const store = useScriptStore()
 const pluginStore = usePluginStore()
 const features = useScriptFeatures()
 const { resolveAsset, urlOf } = useAssetUrls()
+const { openPreview } = useAssetPreview()
 
 const scene = computed(() => store.scenes.find((s) => s.id === props.sceneId))
 
@@ -159,10 +161,11 @@ async function onGenerateSceneImage(): Promise<void> {
             <img
               v-if="urlOf(scene.sceneImage)"
               :src="urlOf(scene.sceneImage)"
-              class="h-24 w-40 rounded-md border border-edge bg-zinc-800 object-cover"
+              class="h-24 w-40 cursor-zoom-in rounded-md border border-edge bg-zinc-800 object-cover"
               alt="场景图"
-              data-test="scene-image"
-            />
+                 data-test="scene-image"
+                @click.stop="openPreview(urlOf(scene.sceneImage)!, 'image')"
+               />
             <div
               v-else
               class="flex h-24 w-40 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
@@ -183,12 +186,13 @@ async function onGenerateSceneImage(): Promise<void> {
           <template v-for="r in scene.referenceImages" :key="r">
             <div class="group relative" data-test="scene-ref-item">
               <img
-                v-if="urlOf(r)"
-                :src="urlOf(r)"
-                class="h-24 w-40 rounded-md border border-edge bg-zinc-800 object-cover"
+              v-if="urlOf(r)"
+              :src="urlOf(r)"
+              class="h-24 w-40 cursor-zoom-in rounded-md border border-edge bg-zinc-800 object-cover"
                 alt="参考图"
-                data-test="scene-ref-image"
-              />
+                 data-test="scene-ref-image"
+                @click.stop="openPreview(urlOf(r)!, 'image')"
+               />
               <div
                 v-else
                 class="flex h-24 w-40 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"

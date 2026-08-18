@@ -6,6 +6,7 @@ import { useScriptStore } from '../../stores/scriptStore'
 import { useCharacterStore } from '../../stores/characterStore'
 import { useShotActions } from './useShotActions'
 import { useAssetUrls } from '../shared/useAssetUrls'
+import { useAssetPreview } from '../shared/assetPreview'
 import { Badge, Button, Input, Progress, Select, Textarea } from '../../components/ui'
 import type { SelectOption } from '../../components/ui'
 import { DEFAULT_SHOT_DURATION, MAX_SHOT_DURATION } from '../../core/models'
@@ -33,6 +34,7 @@ const scriptStore = useScriptStore()
 const characterStore = useCharacterStore()
 const actions = useShotActions()
 const { resolveAsset, urlOf } = useAssetUrls()
+const { openPreview } = useAssetPreview()
 
 const shot = computed(() => store.shotById(props.shotId))
 const busy = ref(false)
@@ -384,10 +386,11 @@ async function onRemove(): Promise<void> {
             <img
               v-if="referenceUrl()"
               :src="referenceUrl()"
-              class="h-24 w-full rounded-md border border-edge bg-zinc-800 object-cover"
+              class="h-24 w-full cursor-zoom-in rounded-md border border-edge bg-zinc-800 object-cover"
               alt="参考图"
-              data-test="ref-preview"
-            />
+                 data-test="ref-preview"
+                @click.stop="openPreview(referenceUrl()!, 'image')"
+               />
             <div
               v-else
               class="flex h-24 w-full items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
@@ -452,10 +455,11 @@ async function onRemove(): Promise<void> {
               <img
                 v-if="frameUrl('firstFrameAssetId')"
                 :src="frameUrl('firstFrameAssetId')"
-                class="h-24 w-full rounded-md border border-edge bg-zinc-800 object-cover"
+                class="h-24 w-full cursor-zoom-in rounded-md border border-edge bg-zinc-800 object-cover"
                 alt="首帧"
-                data-test="first-frame-preview"
-              />
+                 data-test="first-frame-preview"
+                @click.stop="openPreview(frameUrl('firstFrameAssetId')!, 'image')"
+               />
               <div
                 v-else
                 class="flex h-24 w-full items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
@@ -496,10 +500,11 @@ async function onRemove(): Promise<void> {
               <img
                 v-if="frameUrl('lastFrameAssetId')"
                 :src="frameUrl('lastFrameAssetId')"
-                class="h-24 w-full rounded-md border border-edge bg-zinc-800 object-cover"
+                class="h-24 w-full cursor-zoom-in rounded-md border border-edge bg-zinc-800 object-cover"
                 alt="尾帧"
-                data-test="last-frame-preview"
-              />
+                 data-test="last-frame-preview"
+                @click.stop="openPreview(frameUrl('lastFrameAssetId')!, 'image')"
+               />
               <div
                 v-else
                 class="flex h-24 w-full items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"

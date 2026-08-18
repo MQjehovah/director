@@ -2,10 +2,12 @@
 import { watch } from 'vue'
 import { useCharacterStore } from '../../stores/characterStore'
 import { useAssetUrls } from '../shared/useAssetUrls'
+import { useAssetPreview } from '../shared/assetPreview'
 import { Badge, Button } from '../../components/ui'
 
 const store = useCharacterStore()
 const { resolveAsset, urlOf } = useAssetUrls()
+const { openPreview } = useAssetPreview()
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
@@ -45,8 +47,9 @@ watch(
           <img
             v-if="urlOf(c.referenceImages[0])"
             :src="urlOf(c.referenceImages[0])"
-            class="h-20 w-20 rounded-md border border-edge bg-zinc-800 object-cover"
+            class="h-20 w-20 cursor-zoom-in rounded-md border border-edge bg-zinc-800 object-cover"
             alt=""
+            @click.stop="openPreview(urlOf(c.referenceImages[0])!, 'image', c.name)"
           />
           <span v-else class="flex h-20 w-20 items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted">
             图 {{ c.referenceImages[0] }}

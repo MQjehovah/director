@@ -8,22 +8,63 @@ import { persistGeneratedAssets } from '../shared/persistGeneratedAssets'
 import type { AssetResolver } from '../shared/persistGeneratedAssets'
 
 export const CHARACTER_DESCRIPTION_PROMPT =
-  '你是一位动画导演。请根据下面的灵感，生成一份结构化的角色设定卡片（使用中文），内容包含：外貌、性格、背景。请分条列出。\n\n灵感：'
+  '你是一位导演。请根据下面的灵感，生成角色设定（题材不限，可以是写实、动画、科幻、奇幻等任何风格），只返回 JSON（不要任何其他文字），字段：name（简洁的角色名，2-6 个字，符合角色气质与灵感，不含标点）、' +
+  'bio（一句话简介）、appearance（尽可能详尽的角色外观描述，覆盖：身高体型、脸型五官、发色发型、瞳色、肤色、' +
+  '服装穿搭、配饰、气质神态、标志性特征等，务必足够详细以便直接用于生成角色立绘参考图）、' +
+  'tags（字符串数组，2-5 个标签）、' +
+  'voice（建议的 TTS 音色标识，如 zh-female，或一句话描述音色）。\n\n灵感：'
 
 export const REFERENCE_PROMPT_EXPANDER =
-  '你是一位动漫立绘提示词工程师。请根据下面的角色外貌描述，扩写为一段详细、可直接用于 AI 生成角色立绘/参考图的图片生成提示词（使用中文，包含画风、构图、镜头、光影、细节等）。\n\n外貌描述：'
+  '你是一位角色立绘提示词工程师。请根据下面的角色外貌描述，扩写为一段详细、可直接用于 AI 生成角色立绘/参考图的图片生成提示词（使用中文，题材不限，保持角色气质与外观一致性，包含画风、构图、镜头、光影、细节等）。\n\n外貌描述：'
+
+export interface CharacterDescriptionResult {
+  ok: boolean
+  error?: string
+  data?: { name?: string; bio?: string; appearance?: string; tags?: string[]; voice?: string }
+}
+
+/** 从 LLM 回复中提取角色设定 JSON；无法解析时返回 undefined */
+function parseCharacterJson(
+  text: string,
+): { name?: string; bio?: string; appearance?: string; tags?: string[]; voice?: string } | undefined {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start < 0 || end <= start) return undefined
+  try {
+    const obj: unknown = JSON.parse(text.slice(start, end + 1))
+    if (!obj || typeof obj !== 'object') return undefined
+    const record = obj as Record<string, unknown>
+    const tags = Array.isArray(record.tags)
+      ? record.tags.filter((t): t is string => typeof t === 'string')
+      : undefined
+    return {
+      name: typeof record.name === 'string' ? record.name.trim() : undefined,
+      bio: typeof record.bio === 'string' ? record.bio : undefined,
+      appearance: typeof record.appearance === 'string' ? record.appearance : undefined,
+      tags,
+      voice: typeof record.voice === 'string' ? record.voice : undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
 
 export function useCharacterFeatures() {
   const characterStore = useCharacterStore()
   const jobStore = useJobStore()
   const pluginStore = usePluginStore()
 
-  async function generateCharacterDescription(seedIdea: string): Promise<LlmFeatureResult> {
+  async function generateCharacterDescription(
+    seedIdea: string,
+  ): Promise<CharacterDescriptionResult> {
     const llm = pluginStore.llmProvider
     if (!llm) return { ok: false, error: '未配置 LLM Provider，无法生成角色设定。' }
     try {
       const text = await llm.complete(CHARACTER_DESCRIPTION_PROMPT + seedIdea)
-      return { ok: true, text }
+      const parsed = parseCharacterJson(text)
+      if (parsed) return { ok: true, data: parsed }
+      // 非 JSON 回复（旧模型/测试桩）：整体作为详细描述兜底
+      return { ok: true, data: { appearance: text.trim() } }
     } catch (err) {
       return { ok: false, error: `角色设定生成失败：${err instanceof Error ? err.message : String(err)}` }
     }
@@ -48,11 +89,16 @@ export function useCharacterFeatures() {
     const character = characterStore.getCharacter(characterId)
     if (!media || !character) return undefined
 
-    const storedPrompt = character.metadata?.imagePrompt
+    // 参考图提示词 = 图片提示词（画风/构图等）+ 详细描述 + 简介 + 标签，文生图能力生成
+    const storedPrompt =
+      typeof character.metadata?.imagePrompt === 'string'
+        ? character.metadata.imagePrompt.trim()
+        : ''
+    const appearance = character.appearance?.trim() ?? ''
+    const bio = character.bio?.trim() ? `角色简介：${character.bio.trim()}` : ''
+    const tags = character.tags.length > 0 ? `角色标签：${character.tags.join('、')}` : ''
     const prompt =
-      typeof storedPrompt === 'string' && storedPrompt.trim().length > 0
-        ? storedPrompt
-        : (character.appearance?.trim() || character.name)
+      [storedPrompt, appearance, bio, tags].filter(Boolean).join('\n') || character.name
 
     let providerJob: Job
     try {

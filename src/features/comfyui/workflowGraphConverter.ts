@@ -201,6 +201,18 @@ function isExcludedMode(mode: number | undefined): boolean {
   return mode === 2 || mode === 4
 }
 
+function resolveExcludedNodeOrigin(
+  node: WorkflowUiNode,
+  outputSlot: number,
+  resolveLink: (linkId: number | null | undefined) => unknown | undefined,
+): unknown | undefined {
+  const linkedInputs = (node.inputs ?? []).filter((e) => e.link != null && !e.widget?.name)
+  const entry =
+    linkedInputs[outputSlot] ?? (linkedInputs.length === 1 ? linkedInputs[0] : undefined)
+  if (!entry) return undefined
+  return resolveLink(entry.link)
+}
+
 function isVirtualType(type: string | undefined): boolean {
   return (
     type === 'Reroute' ||
@@ -606,7 +618,12 @@ function expandSubgraphNode(
   }
 
   /** 解析内部链路起点（含 Primitive/Reroute 内联与虚拟节点排除） */
-  function resolveInnerOrigin(originId: number | string, originSlot: number): unknown | undefined {
+  function resolveInnerOrigin(
+    originId: number | string,
+    originSlot: number,
+    depth = 0,
+  ): unknown | undefined {
+    if (depth > 32) return undefined
     const originNode = innerNodesById.get(originId)
     if (!originNode) return undefined
     if (isPrimitiveNode(originNode)) {
@@ -620,21 +637,29 @@ function expandSubgraphNode(
       const entry = originNode.inputs?.find((i) => i.link != null)
       const link = entry?.link != null ? innerLinks.get(entry.link) : undefined
       if (!link) return undefined
-      return resolveInnerOrigin(link.origin_id, link.origin_slot)
+      return resolveInnerOrigin(link.origin_id, link.origin_slot, depth + 1)
+    }
+    if (isExcludedMode(originNode.mode)) {
+      return resolveExcludedNodeOrigin(originNode, originSlot, (linkId) =>
+        resolveInnerLink(linkId, depth + 1),
+      )
     }
     if (isVirtualType(originNode.type) || isNoteType(originNode.type)) return undefined
     return [execIdOf(originId), originSlot]
   }
 
   /** 解析当前子图上下文内的一条内部链接 */
-  function resolveInnerLink(linkId: number | null | undefined): unknown | undefined {
+  function resolveInnerLink(
+    linkId: number | null | undefined,
+    depth = 0,
+  ): unknown | undefined {
     if (linkId == null) return undefined
     const l = innerLinks.get(linkId)
     if (!l) return undefined
     if (l.origin_id === inputNodeId) {
       return boundaryInputs.get(`${l.target_id}:${l.target_slot}`)
     }
-    return resolveInnerOrigin(l.origin_id, l.origin_slot)
+    return resolveInnerOrigin(l.origin_id, l.origin_slot, depth + 1)
   }
 
   for (const inner of def.nodes ?? []) {
@@ -781,7 +806,6 @@ export function convertWorkflowJsonToApiGraph(
     let depth = 0
     while (depth < 32) {
       depth += 1
-      if (excludedIds.has(currentId)) return undefined
       const node = nodesById.get(currentId)
       if (!node) return undefined
       if (isPrimitiveNode(node)) {
@@ -794,6 +818,17 @@ export function convertWorkflowJsonToApiGraph(
         currentId = link[1]
         slot = link[2]
         continue
+      }
+      if (excludedIds.has(currentId)) {
+        const value = resolveExcludedNodeOrigin(node, slot, (linkId) => {
+          if (linkId == null) return undefined
+          const link = links.get(linkId)
+          if (!link) return undefined
+          const resolved = resolveOrigin(link[1], link[2])
+          if (!resolved) return undefined
+          return 'ref' in resolved ? resolved.ref : resolved.value
+        })
+        return value === undefined ? undefined : { value }
       }
       if (isVirtualType(node.type)) return undefined
       return { ref: [String(currentId), slot] }

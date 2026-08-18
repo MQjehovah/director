@@ -2,6 +2,7 @@
 import { computed, watch } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { displayAssetOf, useShotActions } from './useShotActions'
+import { useAssetPreview } from '../shared/assetPreview'
 import { Badge, Progress } from '../../components/ui'
 import type { Job, Shot } from '../../core/models'
 
@@ -13,6 +14,7 @@ const emit = defineEmits<{
 
 const store = useStoryboardStore()
 const actions = useShotActions()
+const { openPreview } = useAssetPreview()
 
 const assetIds = computed(() => store.shots.flatMap((s) => s.mediaAssets))
 
@@ -82,13 +84,15 @@ function thumbIsVideo(assetId: string | undefined): boolean {
             muted
             playsinline
             preload="metadata"
-            class="h-full w-full object-cover"
+            class="h-full w-full cursor-zoom-in object-cover"
+            @click.stop="openPreview(actions.thumbUrl(displayAssetOf(shot))!, 'video')"
           />
           <img
             v-else-if="shot.mediaAssets.length > 0 && actions.thumbUrl(displayAssetOf(shot))"
             :src="actions.thumbUrl(displayAssetOf(shot))"
-            class="h-full w-full object-cover"
+            class="h-full w-full cursor-zoom-in object-cover"
             alt=""
+            @click.stop="openPreview(actions.thumbUrl(displayAssetOf(shot))!, 'image')"
           />
           <span v-else class="flex h-full w-full items-center justify-center text-[10px] text-ink-muted">
             {{ activeJobOf(shot.id) ? '生成中…' : '待生成' }}

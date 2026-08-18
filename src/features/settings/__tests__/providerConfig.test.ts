@@ -1,8 +1,9 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import ProviderConfig from '../ProviderConfig.vue'
 import SettingsPanel from '../SettingsPanel.vue'
+import WorkflowTemplateManager from '../WorkflowTemplateManager.vue'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { PluginRegistry } from '../../../core'
 import type { ProviderPlugin } from '../../../core/plugin/types'
@@ -172,6 +173,29 @@ describe('provider config', () => {
     const optionLabels = select.findAll('option').map((o) => o.text())
     expect(optionLabels).toContain('默认内置模板')
     expect(optionLabels).toContain('我的模板')
+  })
+
+  it('refreshes template dropdowns after the template manager reports changes', async () => {
+    const provider: ProviderPlugin = {
+      id: MEDIA_COMFYUI_ID,
+      name: 'ComfyUI 媒体',
+      kind: 'provider',
+      providerType: 'media',
+      enabled: true,
+      configFields: ['workflowTemplateId'],
+      capabilities: ['text2image'],
+    }
+    initStore(provider)
+    const w = mount(ProviderConfig, { props: { provider } })
+    await w.get('[data-test="provider-header"]').trigger('click')
+    const select = w.get('[data-test="config-workflow-template-id"]')
+    const optionLabels = (): string[] => select.findAll('option').map((o) => o.text())
+    saveWorkflowTemplate({ id: 'new-tpl', name: '新模板', graphJson: '{}' })
+    // 模板存进 localStorage 后，未收到变更事件前下拉不刷新
+    expect(optionLabels()).not.toContain('新模板')
+    w.findComponent(WorkflowTemplateManager).vm.$emit('changed')
+    await flushPromises()
+    expect(optionLabels()).toContain('新模板')
   })
 
   it('renders only the declared config fields', async () => {

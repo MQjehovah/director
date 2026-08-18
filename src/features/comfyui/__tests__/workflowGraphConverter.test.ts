@@ -928,6 +928,154 @@ describe('workflowGraphConverter', () => {
     expect(g['230'].inputs.steps).toEqual(['227:226', 0])
   })
 
+  it('resolves a bypassed LoRA as pass-through so switch on_true survives (Qwen 2512 template)', () => {
+    const ui = {
+      nodes: [
+        {
+          id: 238,
+          type: 'sg-qwen',
+          mode: 0,
+          inputs: [],
+          outputs: [{ name: 'output', type: 'IMAGE', links: [1] }],
+          widgets_values: [],
+        },
+        {
+          id: 300,
+          type: 'SaveImage',
+          mode: 0,
+          inputs: [{ name: 'images', type: 'IMAGE', link: 1 }],
+          widgets_values: ['qwen_out'],
+          outputs: [],
+        },
+      ],
+      links: [[1, 238, 0, 300, 0, 'IMAGE']],
+      definitions: {
+        subgraphs: [
+          {
+            id: 'sg-qwen',
+            inputNode: { id: -10 },
+            outputNode: { id: -20 },
+            inputs: [],
+            outputs: [{ name: 'IMAGE', linkIds: [333] }],
+            nodes: [
+              {
+                id: 226,
+                type: 'UNETLoader',
+                mode: 0,
+                inputs: [{ name: 'unet_name', type: 'COMBO' }],
+                widgets_values: ['qwen_image_2512_fp8_e4m3fn.safetensors', 'default'],
+                outputs: [{ name: 'MODEL' }],
+              },
+              {
+                id: 221,
+                type: 'LoraLoaderModelOnly',
+                mode: 4,
+                inputs: [
+                  { name: 'model', type: 'MODEL', link: 312 },
+                  { name: 'lora_name', type: 'COMBO' },
+                  { name: 'strength_model', type: 'FLOAT' },
+                ],
+                widgets_values: ['Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors', 1],
+                outputs: [{ name: 'MODEL' }],
+              },
+              {
+                id: 233,
+                type: 'ComfySwitchNode',
+                mode: 0,
+                inputs: [
+                  { name: 'on_false', type: 'MODEL', link: 324 },
+                  { name: 'on_true', type: 'MODEL', link: 325 },
+                  { name: 'switch', type: 'BOOLEAN', widget: { name: 'switch' }, link: 326 },
+                ],
+                widgets_values: [false],
+                outputs: [{ name: 'MODEL' }],
+              },
+              {
+                id: 229,
+                type: 'PrimitiveBoolean',
+                mode: 0,
+                inputs: [{ name: 'value', type: 'BOOLEAN' }],
+                widgets_values: [false],
+                outputs: [],
+              },
+              {
+                id: 222,
+                type: 'ModelSamplingAuraFlow',
+                mode: 0,
+                inputs: [{ name: 'model', type: 'MODEL', link: 367 }],
+                widgets_values: [3.1],
+                outputs: [{ name: 'MODEL', links: [333] }],
+              },
+            ],
+            links: [
+              { id: 312, origin_id: 226, origin_slot: 0, target_id: 221, target_slot: 0, type: 'MODEL' },
+              { id: 324, origin_id: 226, origin_slot: 0, target_id: 233, target_slot: 0, type: 'MODEL' },
+              { id: 325, origin_id: 221, origin_slot: 0, target_id: 233, target_slot: 1, type: 'MODEL' },
+              { id: 326, origin_id: 229, origin_slot: 0, target_id: 233, target_slot: 2, type: 'BOOLEAN' },
+              { id: 367, origin_id: 233, origin_slot: 0, target_id: 222, target_slot: 0, type: 'MODEL' },
+              { id: 333, origin_id: 222, origin_slot: 0, target_id: -20, target_slot: 0, type: 'IMAGE' },
+            ],
+          },
+        ],
+      },
+    }
+    const result = convertWorkflowJsonToApiGraph(JSON.stringify(ui))
+    expect(result.ok).toBe(true)
+    const g = result.graph!
+    // 被旁路的 LoRA 节点不参与执行
+    expect(g['238:221']).toBeUndefined()
+    // on_true 沿 bypass 直通解析到 LoRA 的 model 输入（基础 UNET）
+    expect(g['238:233'].class_type).toBe('ComfySwitchNode')
+    expect(g['238:233'].inputs.on_false).toEqual(['238:226', 0])
+    expect(g['238:233'].inputs.on_true).toEqual(['238:226', 0])
+    expect(g['238:233'].inputs.switch).toEqual(['238:229', 0])
+    expect(g['238:222'].inputs.model).toEqual(['238:233', 0])
+    expect(g['300'].inputs.images).toEqual(['238:222', 0])
+  })
+
+  it('resolves top-level references to bypassed nodes as pass-through', () => {
+    const ui = {
+      nodes: [
+        {
+          id: 1,
+          type: 'UNETLoader',
+          mode: 0,
+          inputs: [{ name: 'unet_name', type: 'COMBO' }],
+          widgets_values: ['base.safetensors', 'default'],
+          outputs: [{ name: 'MODEL' }],
+        },
+        {
+          id: 2,
+          type: 'LoraLoaderModelOnly',
+          mode: 4,
+          inputs: [
+            { name: 'model', type: 'MODEL', link: 11 },
+            { name: 'lora_name', type: 'COMBO' },
+          ],
+          widgets_values: ['turbo.safetensors', 1],
+          outputs: [{ name: 'MODEL' }],
+        },
+        {
+          id: 3,
+          type: 'ModelSamplingAuraFlow',
+          mode: 0,
+          inputs: [{ name: 'model', type: 'MODEL', link: 12 }],
+          widgets_values: [3.1],
+          outputs: [],
+        },
+      ],
+      links: [
+        [11, 1, 0, 2, 0, 'MODEL'],
+        [12, 2, 0, 3, 0, 'MODEL'],
+      ],
+    }
+    const result = convertWorkflowJsonToApiGraph(JSON.stringify(ui))
+    expect(result.ok).toBe(true)
+    const g = result.graph!
+    expect(g['2']).toBeUndefined()
+    expect(g['3'].inputs.model).toEqual(['1', 0])
+  })
+
   it('aligns instance widget values to exposed widget entries when boundary links precede them', () => {
     const ui = {
       nodes: [

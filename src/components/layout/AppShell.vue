@@ -4,6 +4,7 @@ import { useEventListener } from '@vueuse/core'
 import TopBar from './TopBar.vue'
 import SideNav from './SideNav.vue'
 import StatusBar from './StatusBar.vue'
+import AssetPreviewOverlay from '../../features/shared/AssetPreviewOverlay.vue'
 import { usePluginStore } from '../../stores/pluginStore'
 import { useJobStore } from '../../stores/jobStore'
 
@@ -92,5 +93,6 @@ function startResize(e: PointerEvent) {
     </div>
 
     <StatusBar :running="runningCount" :done="doneCount" :failed="failedCount" />
+    <AssetPreviewOverlay />
   </div>
 </template>
