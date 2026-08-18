@@ -70,8 +70,16 @@ export function createStubMediaProvider(opts: { delayMs?: number } = {}): {
   }
 
   async function generateVideo(p: ImageToVideoParams | TextToVideoParams): Promise<Job> {
-    const isImage2Video = 'imageAssetId' in p && Boolean(p.imageAssetId)
-    const type = isImage2Video ? 'image2video' : 'text2video'
+    const videoParams = p as ImageToVideoParams
+    const hasFirst = Boolean(videoParams.imageAssetId)
+    const hasLast = Boolean(videoParams.lastFrameAssetId)
+    const isVideoFromImages = hasFirst || hasLast
+    const type =
+      hasFirst && hasLast
+        ? 'firstLastFrameVideo'
+        : isVideoFromImages
+          ? 'image2video'
+          : 'text2video'
     const assetId = nextId('asset')
     const asset = AssetSchema.parse({
       id: assetId,
@@ -89,7 +97,10 @@ export function createStubMediaProvider(opts: { delayMs?: number } = {}): {
       pluginId: 'stub-media',
       params: {
         prompt: p.prompt,
-        ...(isImage2Video ? { imageAssetId: (p as ImageToVideoParams).imageAssetId } : {}),
+        ...(isVideoFromImages ? { imageAssetId: videoParams.imageAssetId } : {}),
+        ...(videoParams.lastFrameAssetId
+          ? { lastFrameAssetId: videoParams.lastFrameAssetId }
+          : {}),
       },
     })
     ctrl.setJob(job)
@@ -127,7 +138,7 @@ export function createStubMediaProvider(opts: { delayMs?: number } = {}): {
   return {
     id: 'stub-media',
     name: 'Stub 媒体',
-    capabilities: ['text2image', 'image2video', 'text2video', 'editImage'],
+    capabilities: ['text2image', 'image2video', 'text2video', 'firstLastFrameVideo', 'editImage'],
     generateImage,
     generateVideo,
     editImage,

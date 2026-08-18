@@ -225,6 +225,32 @@ describe('createProjectTools', () => {
       if (res.ok) expect(res.summary).toContain('未命名工作流')
     })
 
+    it('converts a UI-format workflow (nodes) to API format before importing', async () => {
+      const ui = JSON.stringify({
+        nodes: [
+          {
+            id: 3,
+            type: 'KSampler',
+            mode: 0,
+            inputs: [],
+            widgets_values: [42, true, 20, 8, 'euler', 'normal', 1],
+            outputs: [],
+          },
+        ],
+        links: [],
+      })
+      const res = await tool('import_workflow').run({ name: '前端格式', graphJson: ui })
+      expect(res.ok).toBe(true)
+      const templates = listWorkflowTemplates()
+      expect(templates).toHaveLength(1)
+      const saved = JSON.parse(templates[0].graphJson) as Record<
+        string,
+        { inputs: Record<string, unknown> }
+      >
+      expect(saved['3'].inputs.seed).toBe(42)
+      expect(templates[0].seedNodeId).toBe('3')
+    })
+
     it('fails on invalid JSON', async () => {
       const res = await tool('import_workflow').run({ name: 'x', graphJson: '{oops' })
       expect(res.ok).toBe(false)

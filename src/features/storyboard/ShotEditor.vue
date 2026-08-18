@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useStoryboardStore } from '../../stores/storyboardStore'
+import { usePluginStore } from '../../stores/pluginStore'
 import { useShotActions } from './useShotActions'
+import { useAssetUrls } from '../shared/useAssetUrls'
 import { Badge, Button, Input, Progress, Select, Textarea } from '../../components/ui'
 import type { SelectOption } from '../../components/ui'
 import { DEFAULT_SHOT_DURATION, MAX_SHOT_DURATION } from '../../core/models'
@@ -24,11 +26,27 @@ const emit = defineEmits<{
 }>()
 
 const store = useStoryboardStore()
+const pluginStore = usePluginStore()
 const actions = useShotActions()
+const { resolveAsset, urlOf } = useAssetUrls()
 
 const shot = computed(() => store.shotById(props.shotId))
 const busy = ref(false)
 const message = ref('')
+const frameMessage = ref('')
+
+watch(
+  () => [
+    shot.value?.metadata?.firstFrameAssetId,
+    shot.value?.metadata?.lastFrameAssetId,
+  ],
+  (ids) => {
+    for (const id of ids) {
+      if (typeof id === 'string') void resolveAsset(id)
+    }
+  },
+  { immediate: true },
+)
 
 const shotTypeOptions: SelectOption[] = [
   { value: 'image', label: '静态图' },
@@ -127,6 +145,45 @@ function setMove(value: string): void {
   setCameraField('move', value as CameraShape['move'])
 }
 
+type FrameKey = 'firstFrameAssetId' | 'lastFrameAssetId'
+
+function frameUrl(key: FrameKey): string | undefined {
+  const id = shot.value?.metadata?.[key]
+  return typeof id === 'string' ? urlOf(id) : undefined
+}
+
+async function onUploadFrame(e: Event, key: FrameKey): Promise<void> {
+  frameMessage.value = ''
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !shot.value) return
+  const storage = pluginStore.storageProvider
+  if (!storage) {
+    frameMessage.value = '未配置存储 Provider，无法上传帧图。'
+    return
+  }
+  try {
+    const asset = await storage.saveAsset(file, { kind: 'image', source: 'upload' })
+    setField({
+      metadata: { ...(shot.value.metadata ?? {}), [key]: asset.id },
+    })
+    void resolveAsset(asset.id)
+    frameMessage.value = key === 'firstFrameAssetId' ? '首帧图已上传。' : '尾帧图已上传。'
+  } catch (err) {
+    frameMessage.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+function onRemoveFrame(key: FrameKey): void {
+  if (!shot.value) return
+  const id = shot.value.metadata?.[key]
+  setField({
+    metadata: { ...(shot.value.metadata ?? {}), [key]: undefined },
+  })
+  if (typeof id === 'string') void pluginStore.storageProvider?.revokeAssetUrl?.(id)
+}
+
 async function onGenerate(): Promise<void> {
   message.value = ''
   busy.value = true
@@ -212,13 +269,108 @@ async function onRemove(): Promise<void> {
           @update:model-value="setShotType"
         />
       </label>
-      <p
-        v-if="shot.metadata?.continuationFrom"
-        class="text-xs text-amber-300"
-        data-test="continuation-hint"
-      >
-        将延续上一段视频的结尾继续生成
-      </p>
+
+      <div v-if="shot.shotType === 'video'" class="flex flex-col gap-2">
+        <span class="text-xs font-medium text-ink-muted">首尾帧（文生视频用）</span>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="flex flex-col gap-1">
+            <div class="group relative">
+              <img
+                v-if="frameUrl('firstFrameAssetId')"
+                :src="frameUrl('firstFrameAssetId')"
+                class="h-24 w-full rounded-md border border-edge bg-zinc-800 object-cover"
+                alt="首帧"
+                data-test="first-frame-preview"
+              />
+              <div
+                v-else
+                class="flex h-24 w-full items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
+                data-test="first-frame-empty"
+              >
+                未设置
+              </div>
+              <button
+                v-if="shot.metadata?.firstFrameAssetId"
+                type="button"
+                aria-label="删除首帧"
+                title="删除首帧"
+                data-test="first-frame-remove"
+                class="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full border border-edge bg-zinc-950 text-xs leading-none text-ink-muted transition-colors hover:border-red-500/60 hover:text-red-400 group-hover:flex"
+                @click="onRemoveFrame('firstFrameAssetId')"
+              >
+                ✕
+              </button>
+            </div>
+            <label
+              class="flex h-8 cursor-pointer items-center justify-center gap-1 rounded-md border border-dashed border-zinc-600 bg-zinc-900/40 text-[10px] text-zinc-500 transition-colors hover:border-amber-400/60 hover:text-amber-300"
+              :class="{ 'pointer-events-none opacity-40': busy }"
+              data-test="first-frame-upload"
+              title="上传首帧图片"
+            >
+              <span>+ 首帧</span>
+              <input
+                type="file"
+                accept="image/*"
+                class="hidden"
+                data-test="first-frame-input"
+                @change="onUploadFrame($event, 'firstFrameAssetId')"
+              />
+            </label>
+          </div>
+          <div class="flex flex-col gap-1">
+            <div class="group relative">
+              <img
+                v-if="frameUrl('lastFrameAssetId')"
+                :src="frameUrl('lastFrameAssetId')"
+                class="h-24 w-full rounded-md border border-edge bg-zinc-800 object-cover"
+                alt="尾帧"
+                data-test="last-frame-preview"
+              />
+              <div
+                v-else
+                class="flex h-24 w-full items-center justify-center rounded-md border border-edge bg-zinc-800 text-[10px] text-ink-muted"
+                data-test="last-frame-empty"
+              >
+                未设置
+              </div>
+              <button
+                v-if="shot.metadata?.lastFrameAssetId"
+                type="button"
+                aria-label="删除尾帧"
+                title="删除尾帧"
+                data-test="last-frame-remove"
+                class="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full border border-edge bg-zinc-950 text-xs leading-none text-ink-muted transition-colors hover:border-red-500/60 hover:text-red-400 group-hover:flex"
+                @click="onRemoveFrame('lastFrameAssetId')"
+              >
+                ✕
+              </button>
+            </div>
+            <label
+              class="flex h-8 cursor-pointer items-center justify-center gap-1 rounded-md border border-dashed border-zinc-600 bg-zinc-900/40 text-[10px] text-zinc-500 transition-colors hover:border-amber-400/60 hover:text-amber-300"
+              :class="{ 'pointer-events-none opacity-40': busy }"
+              data-test="last-frame-upload"
+              title="上传尾帧图片"
+            >
+              <span>+ 尾帧</span>
+              <input
+                type="file"
+                accept="image/*"
+                class="hidden"
+                data-test="last-frame-input"
+                @change="onUploadFrame($event, 'lastFrameAssetId')"
+              />
+            </label>
+          </div>
+        </div>
+        <p class="text-[10px] leading-relaxed text-ink-muted">
+          上传首尾帧后生成视频时按首尾帧约束起止画面；模板中需配置
+          <code class="text-ink">first_frame</code> / <code class="text-ink">last_frame</code>
+          或 <code class="text-ink">{last_frame}</code> 占位符。
+        </p>
+        <p v-if="frameMessage" class="text-xs text-amber-300" data-test="frame-message">
+          {{ frameMessage }}
+        </p>
+      </div>
 
       <div class="grid grid-cols-2 gap-2">
         <label class="block text-xs font-medium text-ink-muted">

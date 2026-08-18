@@ -140,17 +140,25 @@ export function deleteWorkflowTemplate(id: string): void {
   writeAll(readAll().filter((t) => t.id !== id))
 }
 
-export function importWorkflowGraph(graphJson: string, name: string): ImportWorkflowResult {
-  const { graph, error } = parseGraph(graphJson)
-  if (!graph) return { error: error as string }
+/** 校验并识别 API 格式图（节点 id → {class_type, inputs}），供转换结果/文件导入复用 */
+export function importWorkflowObject(
+  name: string,
+  graph: WorkflowGraph,
+): ImportWorkflowResult {
   const { promptNodeId, negativeNodeId, seedNodeId } = detectNodes(graph)
   return {
     id: newId('workflow'),
     name,
-    graphJson,
+    graphJson: JSON.stringify(graph),
     promptNodeId,
     negativeNodeId,
     seedNodeId,
     createdAt: new Date().toISOString(),
   }
+}
+
+export function importWorkflowGraph(graphJson: string, name: string): ImportWorkflowResult {
+  const { graph, error } = parseGraph(graphJson)
+  if (!graph) return { error: error as string }
+  return importWorkflowObject(name, graph)
 }

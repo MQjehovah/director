@@ -89,17 +89,6 @@ async function removeShot(id: string): Promise<void> {
   emit('remove', id)
 }
 
-function setContinueFromPrev(shotId: string, enabled: boolean): void {
-  const shot = store.shotById(shotId)
-  if (!shot) return
-  store.updateShot(shotId, {
-    metadata: {
-      ...(shot.metadata ?? {}),
-      ...(enabled ? { continueFromPrev: true } : { continueFromPrev: undefined }),
-    },
-  })
-}
-
 function onDragStart(e: DragEvent, shotId: string): void {
   dragId.value = shotId
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
@@ -186,20 +175,6 @@ function onDrop(e: DragEvent, shotId: string): void {
           <span class="mt-2 flex flex-wrap items-center gap-2">
             <Badge>{{ shotTypeLabel[shot.shotType] }}</Badge>
             <span class="text-[10px] text-ink-muted">{{ shot.camera?.duration ?? 5 }}s</span>
-            <label
-              v-if="shot.shotType === 'video'"
-              class="flex cursor-pointer items-center gap-1 text-[10px] text-ink-muted"
-              data-test="continue-toggle"
-              title="启用后参照上一段视频的结尾继续生成"
-            >
-              <input
-                type="checkbox"
-                class="accent-amber-400"
-                :checked="shot.metadata?.continueFromPrev === true"
-                @change="setContinueFromPrev(shot.id, ($event.target as HTMLInputElement).checked)"
-              />
-              连续生成
-            </label>
             <Badge v-if="statusInfo(shot.id)" :variant="statusInfo(shot.id)?.variant">
               {{ statusInfo(shot.id)?.text }}
             </Badge>

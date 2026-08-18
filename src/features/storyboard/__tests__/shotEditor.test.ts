@@ -1,4 +1,4 @@
-﻿import { flushPromises, mount, DOMWrapper } from '@vue/test-utils'
+import { flushPromises, mount, DOMWrapper } from '@vue/test-utils'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import ShotGrid from '../ShotGrid.vue'
@@ -93,7 +93,11 @@ function registerCapabilityProvider(
       return job
     }
   }
-  if (caps.includes('text2video') || caps.includes('image2video')) {
+  if (
+    caps.includes('text2video') ||
+    caps.includes('image2video') ||
+    caps.includes('firstLastFrameVideo')
+  ) {
     instance.generateVideo = async (p: { shotRef?: string }) => {
       const job = createJob(p.shotRef)
       ctrl.setJob(job)
@@ -134,24 +138,6 @@ describe('shot grid', () => {
     const video = w.get('[data-test="shot-thumb-video"]')
     expect(video.attributes('src')).toContain('clip.mp4')
     expect(w.find('[data-test="shot-thumb-img"]').exists()).toBe(false)
-  })
-
-  it('toggles 连续生成 on video shot cards', async () => {
-    const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'video' })
-    const w = mount(ShotGrid)
-    const toggle = w.get('[data-test="continue-toggle"]')
-    await toggle.find('input').setValue(true)
-    expect(store.shotById(shot.id)?.metadata.continueFromPrev).toBe(true)
-    await toggle.find('input').setValue(false)
-    expect(store.shotById(shot.id)?.metadata.continueFromPrev).toBeUndefined()
-  })
-
-  it('does not show 连续生成 for image shots', () => {
-    const store = useStoryboardStore()
-    store.addShot({ shotType: 'image' })
-    const w = mount(ShotGrid)
-    expect(w.find('[data-test="continue-toggle"]').exists()).toBe(false)
   })
 
   it('emits select with the shot id when a card is clicked', async () => {
@@ -224,11 +210,60 @@ describe('shot editor', () => {
     expect(store.shotById(shot.id)?.metadata.dialogue).toBe('小明：你好')
   })
 
-  it('shows a continuation hint when the shot continues from a previous video', async () => {
+  it('shows first/last frame upload controls for video shots but not image shots', async () => {
     const store = useStoryboardStore()
-    const shot = store.addShot({ shotType: 'video', metadata: { continuationFrom: 'asset-x' } })
+    const videoShot = store.addShot({ shotType: 'video' })
+    const w = mount(ShotEditor, { props: { shotId: videoShot.id } })
+    expect(w.find('[data-test="first-frame-upload"]').exists()).toBe(true)
+    expect(w.find('[data-test="last-frame-upload"]').exists()).toBe(true)
+
+    const imageShot = store.addShot({ shotType: 'image' })
+    const w2 = mount(ShotEditor, { props: { shotId: imageShot.id } })
+    expect(w2.find('[data-test="first-frame-upload"]').exists()).toBe(false)
+    expect(w2.find('[data-test="last-frame-upload"]').exists()).toBe(false)
+  })
+
+  it('uploads a first frame image and stores the asset id in metadata', async () => {
+    const registry = new PluginRegistry()
+    registry.register(
+      createStubMediaPlugin({ delayMs: 30 }),
+    )
+    registry.register({
+      id: 'storage-upload',
+      name: 'Upload Storage',
+      kind: 'provider',
+      providerType: 'storage',
+      enabled: true,
+      instance: {
+        id: 'storage-upload',
+        name: 'Upload Storage',
+        async saveAsset(file: File, meta: { kind: string; source: string }) {
+          return {
+            id: `upload-${file.name}`,
+            kind: meta.kind,
+            source: meta.source,
+            url: `data:image/png;base64,FAKE`,
+          }
+        },
+        async loadAsset(id: string) {
+          return { id, kind: 'image', source: 'upload', url: `data:image/png;base64,FAKE` }
+        },
+        async getAssetUrl(asset: Asset) {
+          return asset.url
+        },
+        async revokeAssetUrl() {},
+      },
+    })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' })
     const w = mount(ShotEditor, { props: { shotId: shot.id } })
-    expect(w.find('[data-test="continuation-hint"]').exists()).toBe(true)
+    const input = w.get('[data-test="first-frame-input"]')
+    const file = { name: 'first.png', text: async () => '' } as unknown as File
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+    expect(store.shotById(shot.id)?.metadata.firstFrameAssetId).toBe('upload-first.png')
   })
 
   it('generates media and appends the asset on completion', async () => {
@@ -401,26 +436,70 @@ describe('useShotActions', () => {
     expect(job?.type).toBe('image2video')
   })
 
-  it('references the previous video for continuation only when 连续生成 is enabled', async () => {
+  it('generateMedia passes first and last frame asset ids for 首尾帧 video generation', async () => {
     initMedia()
     const store = useStoryboardStore()
-    const first = store.addShot({ shotType: 'video' as const, prompt: '第一段' })
-    store.updateShot(first.id, {
-      mediaAssets: ['https://example.com/view?filename=prev.mp4&type=output'],
+    const jobs = useJobStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '首尾帧' })
+    store.updateShot(shot.id, {
+      metadata: { firstFrameAssetId: 'first-asset', lastFrameAssetId: 'last-asset' },
     })
-    const second = store.addShot({ shotType: 'video' as const, prompt: '第二段' })
-    await useShotActions().generateMedia(second.id)
-    await wait(100)
-    // 未勾选：不续写
-    expect(store.shotById(second.id)?.metadata.continuationFrom).toBeUndefined()
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('firstLastFrameVideo')
+    expect(jobs.jobs[0].params?.lastFrameAssetId).toBe('last-asset')
+    expect(store.shotById(shot.id)?.metadata.inputImageAssetId).toBe('first-asset')
+    expect(store.shotById(shot.id)?.metadata.firstFrameAssetId).toBe('first-asset')
+  })
 
-    // 勾选后：续写上一段视频
-    store.updateShot(second.id, { metadata: { continueFromPrev: true } })
-    const job = await useShotActions().generateMedia(second.id)
-    expect(job).toBeDefined()
-    expect(store.shotById(second.id)?.metadata.continuationFrom).toBe(
-      'https://example.com/view?filename=prev.mp4&type=output',
-    )
+  it('routing: 首尾帧 shot prefers a provider declaring firstLastFrameVideo', async () => {
+    const registry = new PluginRegistry()
+    registerCapabilityProvider(registry, {
+      id: 'fl-only',
+      caps: ['firstLastFrameVideo'],
+      jobType: 'firstLastFrameVideo',
+    })
+    registerCapabilityProvider(registry, {
+      id: 'i2v-only',
+      caps: ['image2video'],
+      jobType: 'image2video',
+    })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '首尾帧' })
+    store.updateShot(shot.id, {
+      metadata: { firstFrameAssetId: 'first', lastFrameAssetId: 'last' },
+    })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.pluginId).toBe('fl-only')
+  })
+
+  it('routing: falls back to image2video provider when none declares firstLastFrameVideo', async () => {
+    const registry = new PluginRegistry()
+    registerCapabilityProvider(registry, {
+      id: 'i2v-only',
+      caps: ['image2video'],
+      jobType: 'image2video',
+    })
+    usePluginStore().init(registry)
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '首尾帧' })
+    store.updateShot(shot.id, {
+      metadata: { firstFrameAssetId: 'first', lastFrameAssetId: 'last' },
+    })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.pluginId).toBe('i2v-only')
+    expect(job?.type).toBe('image2video')
+  })
+
+  it('generateMedia uses image2video when only a last frame is set', async () => {
+    initMedia()
+    const store = useStoryboardStore()
+    const jobs = useJobStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '仅尾帧' })
+    store.updateShot(shot.id, { metadata: { lastFrameAssetId: 'last-only' } })
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('image2video')
+    expect(jobs.jobs[0].params?.lastFrameAssetId).toBe('last-only')
   })
 
   it('cutSceneToShots carries the scene image and scene context into shot metadata', () => {

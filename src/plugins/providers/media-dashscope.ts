@@ -185,7 +185,7 @@ export function createMediaDashScopePlugin(opts?: MediaDashScopeOptions): Provid
     kind: 'provider',
     providerType: 'media',
     enabled: true,
-    description: '通义万相/阿里云百炼文生图。填写 API Key（与模型名），设为当前使用后生成立绘走 DashScope。',
+    description: '通义万相/阿里云百炼文生图。填写 API Key（与模型名），并在能力分配中选择由 DashScope 提供「文生图」后，生成立绘即走 DashScope。',
     capabilities: instance.capabilities,
     configFields: ['baseUrl', 'apiKey', 'model'],
     instance,

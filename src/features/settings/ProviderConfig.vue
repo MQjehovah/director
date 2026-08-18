@@ -3,7 +3,12 @@ import { computed, reactive, ref, watch } from 'vue'
 import { Badge, Button, Input, Select, Switch, Textarea } from '../../components/ui'
 import type { SelectOption } from '../../components/ui'
 import { usePluginStore } from '../../stores/pluginStore'
-import type { ProviderConfigField, ProviderPlugin } from '../../core/plugin/types'
+import {
+  MEDIA_CAPABILITY_LABELS,
+  type MediaCapability,
+  type ProviderConfigField,
+  type ProviderPlugin,
+} from '../../core/plugin/types'
 import { loadProviderConfig, saveProviderConfig } from './httpBackendConfig'
 import type { ProviderConfig } from './httpBackendConfig'
 import { listWorkflowTemplates } from '../comfyui/workflowStore'
@@ -23,6 +28,9 @@ const store = usePluginStore()
 const expanded = ref(false)
 
 const isComfyUi = computed(() => props.provider.id === MEDIA_COMFYUI_ID)
+
+// 媒体 Provider 的能力由「能力分配」逐项选择，不再使用单一「当前使用」概念
+const isMedia = computed(() => props.provider.providerType === 'media')
 
 const config = reactive<ProviderConfig>({
   ...loadProviderConfig(props.provider.id),
@@ -81,23 +89,33 @@ const FIELD_META: Record<
     multiline: true,
   },
   workflowTemplateId: {
-    label: '文生图工作流模板',
+    label: '文生图模板',
     placeholder: '选择已保存的文生图工作流模板',
     templateSelect: true,
   },
+  textVideoWorkflowTemplateId: {
+    label: '文生视频模板',
+    placeholder: '选择用于文生视频（无参考帧）的 ComfyUI 工作流模板',
+    templateSelect: true,
+  },
+  imageVideoWorkflowTemplateId: {
+    label: '参考生视频模板',
+    placeholder: '选择用于参考生视频（单图/首帧）的 ComfyUI 工作流模板',
+    templateSelect: true,
+  },
+  firstLastFrameWorkflowTemplateId: {
+    label: '首尾帧视频模板',
+    placeholder: '选择用于首尾帧文生视频的 ComfyUI 工作流模板',
+    templateSelect: true,
+  },
   videoWorkflowTemplateId: {
-    label: '视频工作流模板',
-    placeholder: '选择用于文生视频/图生视频的 ComfyUI 工作流模板',
+    label: '通用视频模板（兼容）',
+    placeholder: '旧配置：未配置专用模板时回退使用',
     templateSelect: true,
   },
   img2imgWorkflowTemplateId: {
-    label: '图生图工作流模板',
+    label: '参考生图模板',
     placeholder: '选择用于参考生图（图生图）的 ComfyUI 工作流模板',
-    templateSelect: true,
-  },
-  continuationVideoWorkflowTemplateId: {
-    label: '视频续写工作流模板',
-    placeholder: '选择用于参照上一段视频结尾继续生成（如 MiniMax H3 Motion Context）的模板',
     templateSelect: true,
   },
 }
@@ -109,12 +127,42 @@ const templateOptions = computed<SelectOption[]>(() => [
   ...listWorkflowTemplates().map((t) => ({ value: t.id, label: t.name })),
 ])
 
+const capabilityChips = computed<MediaCapability[]>(() =>
+  (props.provider.capabilities ?? []).filter(
+    (cap): cap is MediaCapability => cap in MEDIA_CAPABILITY_LABELS,
+  ),
+)
+
+/** 该能力当前是否由本 Provider 提供（即能力匹配解析到本 Provider） */
+function providesCapability(cap: MediaCapability): boolean {
+  return store.resolveProviderCapability('media', cap)?.id === props.provider.id
+}
+
+/** 提供该能力的所有已启用 Provider（含「自动匹配」） */
+function providersForCapability(cap: MediaCapability): SelectOption[] {
+  return [
+    { value: '', label: '自动匹配' },
+    ...store
+      .enabledProviders('media')
+      .filter((p) => p.capabilities === undefined || p.capabilities.includes(cap))
+      .map((p) => ({ value: p.id, label: p.name })),
+  ]
+}
+
+function assignedProviderId(cap: MediaCapability): string {
+  return store.capabilityProviderFor(cap) ?? ''
+}
+
+function onAssignCapability(cap: MediaCapability, value: string): void {
+  store.setCapabilityProvider(cap, value || undefined)
+}
+
 function fieldTestKey(field: ProviderConfigField): string {
   return `config-${field.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`
 }
 
 // 与 pluginStore.resolveInstance 的回退逻辑一致：
-// 显式选择 > 同类型第一个启用插件
+// 显式选择 > 同类型第一个启用插件（仅非媒体 Provider 使用）
 const isActive = computed<boolean>(() => {
   if (!store.isEnabled(props.provider.id)) return false
   const selected = store.activeProviders[props.provider.providerType]
@@ -145,9 +193,8 @@ function setActive(): void {
         </p>
       </div>
       <div class="flex shrink-0 items-center gap-2" @click.stop>
-        <Badge v-if="isActive" variant="success" data-test="provider-active">当前使用</Badge>
         <Button
-          v-if="!isActive && store.isEnabled(provider.id)"
+          v-if="!isMedia && !isActive && store.isEnabled(provider.id)"
           variant="outline"
           size="sm"
           data-test="provider-set-active"
@@ -165,6 +212,42 @@ function setActive(): void {
     </div>
 
     <div v-if="expanded" class="flex flex-col gap-4 border-t border-edge p-4">
+      <div
+        v-if="capabilityChips.length > 0"
+        class="flex flex-col gap-2 rounded-md border border-edge bg-zinc-900/60 p-3"
+        data-test="capability-assignment"
+      >
+        <span class="text-xs font-medium text-ink-muted">
+          能力分配（每个能力选择由哪个 Provider 提供）
+        </span>
+        <div
+          v-for="cap in capabilityChips"
+          :key="cap"
+          class="flex items-center justify-between gap-3"
+          data-test="cap-assign-row"
+        >
+          <span class="flex min-w-0 items-center gap-2 text-sm text-ink">
+            <span class="truncate">
+              {{ MEDIA_CAPABILITY_LABELS[cap as keyof typeof MEDIA_CAPABILITY_LABELS] }}
+            </span>
+            <span
+              v-if="providesCapability(cap)"
+              class="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300"
+              data-test="cap-providing"
+            >
+              当前提供
+            </span>
+          </span>
+          <Select
+            :model-value="assignedProviderId(cap)"
+            :options="providersForCapability(cap)"
+            class="w-44 shrink-0"
+            :data-test="`cap-assign-${cap}`"
+            @update:model-value="onAssignCapability(cap, $event)"
+          />
+        </div>
+      </div>
+
       <template v-if="fields.length > 0">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <label

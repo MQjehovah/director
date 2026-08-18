@@ -19,10 +19,29 @@ import {
 import { collectPipelineStepDefs, pipelineStepDefByKind } from '../core/plugin/pipeline'
 import type { LLMProvider, MediaProvider, StorageProvider, TTSProvider } from '../providers'
 
+const CAPABILITY_PROVIDER_KEY = 'ai-director:capability-providers'
+
+function loadCapabilityProviders(): Partial<Record<MediaCapability, string>> {
+  try {
+    const raw = localStorage.getItem(CAPABILITY_PROVIDER_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Partial<Record<MediaCapability, string>>
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
 export const usePluginStore = defineStore('plugin', () => {
   const registry = shallowRef<PluginRegistry | null>(null)
   const activeProviders = ref<Partial<Record<ProviderType, string>>>({})
   const enabledState = reactive<Record<string, boolean>>({})
+  const capabilityProviders = reactive<Partial<Record<MediaCapability, string>>>(
+    loadCapabilityProviders(),
+  )
   let unsubscribe: (() => void) | undefined
 
   function init(r: PluginRegistry): void {
@@ -42,6 +61,22 @@ export const usePluginStore = defineStore('plugin', () => {
 
   function setActiveProvider(type: ProviderType, id: string): void {
     activeProviders.value = { ...activeProviders.value, [type]: id }
+  }
+
+  /** 指派某个能力由哪个 Provider 提供；传空则恢复自动匹配 */
+  function setCapabilityProvider(cap: MediaCapability, providerId?: string): void {
+    if (providerId) capabilityProviders[cap] = providerId
+    else delete capabilityProviders[cap]
+    try {
+      localStorage.setItem(CAPABILITY_PROVIDER_KEY, JSON.stringify(capabilityProviders))
+    } catch {
+      // storage may be unavailable; resolution still works within the session
+    }
+  }
+
+  function capabilityProviderFor(cap: MediaCapability): string | undefined {
+    const value = capabilityProviders[cap]
+    return typeof value === 'string' && value.length > 0 ? value : undefined
   }
 
   function isEnabled(id: string): boolean {
@@ -95,6 +130,20 @@ export const usePluginStore = defineStore('plugin', () => {
   ): ProviderPlugin | undefined {
     const r = registry.value
     if (!r) return undefined
+    // 1) 用户显式指派的能力提供方
+    const assignedId = capabilityProviderFor(cap)
+    if (assignedId) {
+      const assigned = r.getProvider(assignedId)
+      if (
+        assigned &&
+        assigned.providerType === type &&
+        enabledState[assigned.id] &&
+        hasCapability(assigned, cap)
+      ) {
+        return assigned
+      }
+    }
+    // 2) 「设为当前使用」的 Provider
     const preferredId = activeProviders.value[type]
     if (preferredId) {
       const preferred = r.getProvider(preferredId)
@@ -102,6 +151,7 @@ export const usePluginStore = defineStore('plugin', () => {
         return preferred
       }
     }
+    // 3) 第一个启用的具备该能力的 Provider
     return enabledProviders(type).find((p) => hasCapability(p, cap))
   }
 
@@ -126,7 +176,10 @@ export const usePluginStore = defineStore('plugin', () => {
       }
       return undefined
     }
-    // 未指定时取第一个启用的、具备该能力的 Provider
+    // 未指定时：优先取用户指派 / 当前启用的 Provider（若具备该能力）
+    const resolved = resolveProviderCapability(type, cap)
+    if (resolved && resolved.instance !== undefined) return resolved.instance as T
+    // 兜底：扫描带实例的已启用 Provider
     const fallback = enabledProviders(type).find(
       (p) => hasCapability(p, cap) && p.instance !== undefined,
     )
@@ -184,6 +237,8 @@ export const usePluginStore = defineStore('plugin', () => {
     init,
     enabledProviders,
     setActiveProvider,
+    setCapabilityProvider,
+    capabilityProviderFor,
     isEnabled,
     toggle,
     getProviderInstance,

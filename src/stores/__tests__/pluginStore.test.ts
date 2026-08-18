@@ -48,6 +48,7 @@ function makeFeaturePlugin(
 describe('plugin store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    localStorage.removeItem('ai-director:capability-providers')
   })
   it('resolves nothing before init', () => {
     const s = usePluginStore()
@@ -281,10 +282,83 @@ describe('plugin store', () => {
       expect(
         s.resolveInstanceCapability<{ id: string }>('media', 'text2image', 'media-other')?.id,
       ).toBe('media-other')
-      // 未指定 providerId 时取第一个启用的、具备该能力的 Provider
+      // 未指定 providerId 时优先取「设为当前使用」的 Provider
       expect(s.resolveInstanceCapability<{ id: string }>('media', 'text2image')?.id).toBe(
-        'stub-media',
+        'media-other',
       )
+    })
+
+    it('resolveInstanceCapability falls back when the active provider lacks the capability', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(createStubMediaPlugin())
+      r.register({
+        id: 'media-video',
+        name: 'Video Only',
+        kind: 'provider',
+        providerType: 'media',
+        enabled: true,
+        capabilities: ['text2video'],
+        instance: { id: 'media-video', name: 'Video Only' },
+      })
+      s.init(r)
+      s.setActiveProvider('media', 'media-video')
+      expect(
+        (s.resolveInstanceCapability<{ id: string }>('media', 'image2video') as { id: string })
+          ?.id,
+      ).toBe('stub-media')
+    })
+
+    it('setCapabilityProvider overrides capability resolution and clears back to auto', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(createStubMediaPlugin())
+      r.register({
+        id: 'media-other',
+        name: 'Other Media',
+        kind: 'provider',
+        providerType: 'media',
+        enabled: true,
+        capabilities: ['text2image'],
+        instance: { id: 'media-other', name: 'Other Media' },
+      })
+      s.init(r)
+      s.setCapabilityProvider('text2image', 'media-other')
+      expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('media-other')
+      expect(
+        (s.resolveInstanceCapability<{ id: string }>('media', 'text2image') as { id: string })
+          ?.id,
+      ).toBe('media-other')
+      s.setCapabilityProvider('text2image')
+      expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('stub-media')
+    })
+
+    it('ignores a capability assignment when the provider is disabled', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(createStubMediaPlugin())
+      r.register({
+        id: 'media-other',
+        name: 'Other Media',
+        kind: 'provider',
+        providerType: 'media',
+        enabled: true,
+        capabilities: ['text2image'],
+        instance: { id: 'media-other', name: 'Other Media' },
+      })
+      s.init(r)
+      s.setCapabilityProvider('text2image', 'media-other')
+      s.toggle('media-other', false)
+      expect(s.resolveProviderCapability('media', 'text2image')?.id).toBe('stub-media')
+    })
+
+    it('persists capability assignments to localStorage', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(createStubMediaPlugin())
+      s.init(r)
+      s.setCapabilityProvider('text2image', 'media-other')
+      expect(localStorage.getItem('ai-director:capability-providers')).toContain('media-other')
     })
   })
 

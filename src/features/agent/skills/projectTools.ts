@@ -4,7 +4,12 @@ import { useStoryboardStore } from '../../../stores/storyboardStore'
 import { useScriptFeatures } from '../../script/useScriptFeatures'
 import { useCharacterFeatures } from '../../characters/useCharacterFeatures'
 import { useShotActions } from '../../storyboard/useShotActions'
-import { importWorkflowGraph, saveWorkflowTemplate } from '../../comfyui/workflowStore'
+import {
+  importWorkflowGraph,
+  importWorkflowObject,
+  saveWorkflowTemplate,
+} from '../../comfyui/workflowStore'
+import { convertWorkflowJsonToApiGraph } from '../../comfyui/workflowGraphConverter'
 import type { AgentTool, AgentToolResult } from '../core/types'
 
 function failure(name: string, message: string): AgentToolResult {
@@ -211,14 +216,37 @@ export function createProjectTools(): AgentTool[] {
     {
       name: 'import_workflow',
       description:
-        '导入 ComfyUI 工作流模板并识别正负提示词与种子节点。参数：graphJson（工作流 JSON，必填）、name（可选，模板名）。',
+        '导入 ComfyUI 工作流模板并识别正负提示词与种子节点，支持 API 格式与前端 nodes 格式（自动转换）。参数：graphJson（工作流 JSON，必填）、name（可选，模板名）。',
       async run(args) {
         const graphJson = (args.graphJson ?? '').trim()
         if (!graphJson) return failure('import_workflow', '请提供工作流 JSON graphJson')
         const name = (args.name ?? '').trim() || '未命名工作流'
         try {
           const tpl = importWorkflowGraph(graphJson, name)
-          if ('error' in tpl) return failure('import_workflow', tpl.error)
+          if ('error' in tpl) {
+            // 兼容前端 nodes 格式：自动转换为 API 格式后再导入
+            let parsed: unknown
+            try {
+              parsed = JSON.parse(graphJson)
+            } catch {
+              return failure('import_workflow', tpl.error)
+            }
+            const converted = convertWorkflowJsonToApiGraph(parsed)
+            if (!converted.ok || !converted.graph) {
+              return failure('import_workflow', converted.error ?? tpl.error)
+            }
+            const convertedTpl = importWorkflowObject(name, converted.graph)
+            if ('error' in convertedTpl) {
+              return failure('import_workflow', convertedTpl.error)
+            }
+            saveWorkflowTemplate(convertedTpl)
+            return {
+              name: 'import_workflow',
+              ok: true,
+              summary: `已导入工作流「${convertedTpl.name}」（${convertedTpl.id}）并识别节点`,
+              applyTarget: { kind: 'workflow', id: convertedTpl.id },
+            }
+          }
           saveWorkflowTemplate(tpl)
           return {
             name: 'import_workflow',

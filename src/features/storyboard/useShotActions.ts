@@ -6,7 +6,7 @@ import type { Asset, Job, Shot } from '../../core/models'
 import type { MediaCapability } from '../../core/plugin/types'
 import { capabilityForJobType } from '../../providers/capabilities'
 import type { MediaCapabilityProvider } from '../../providers/capabilities'
-import type { MediaProvider } from '../../providers/MediaProvider'
+import type { ImageToVideoParams, MediaProvider } from '../../providers/MediaProvider'
 import { persistGeneratedAssets } from '../shared/persistGeneratedAssets'
 import type { AssetResolver } from '../shared/persistGeneratedAssets'
 
@@ -26,9 +26,15 @@ function isImageSrc(value: string): boolean {
   )
 }
 
-/** 镜头用于 image2video 的输入图 id（记录于 metadata，避免与输出视频资产混淆） */
-function recordedInputImage(shot: Shot | undefined): string | undefined {
-  const value = shot?.metadata?.inputImageAssetId
+/** 镜头显式上传/记录的首帧图 id（记录于 metadata，避免与输出视频资产混淆） */
+function recordedFirstFrame(shot: Shot | undefined): string | undefined {
+  const value = shot?.metadata?.firstFrameAssetId
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/** 镜头显式上传的尾帧图 id（首尾帧文生视频的尾帧） */
+function recordedLastFrame(shot: Shot | undefined): string | undefined {
+  const value = shot?.metadata?.lastFrameAssetId
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
@@ -39,10 +45,12 @@ export function displayAssetOf(shot: Shot | undefined): string | undefined {
   return assets.length > 0 ? assets[assets.length - 1] : undefined
 }
 
-/** 计算 image2video 的输入图：显式记录优先，其次回退到 mediaAssets 中的图片直链 */
+/** 计算 image2video 的首帧输入图：显式首帧优先，其次历史记录/场次场景图/mediaAssets 图片 */
 function imageInputFor(shot: Shot | undefined): string | undefined {
-  const recorded = recordedInputImage(shot)
+  const recorded = recordedFirstFrame(shot)
   if (recorded) return recorded
+  const historical = shot?.metadata?.inputImageAssetId
+  if (typeof historical === 'string' && historical.length > 0) return historical
   // 场次场景图作为该场镜头的视觉锚点：视频镜头优先用它做图生视频底图
   const sceneImage = shot?.metadata?.sceneImageAssetId
   if (typeof sceneImage === 'string' && sceneImage.length > 0) return sceneImage
@@ -50,10 +58,25 @@ function imageInputFor(shot: Shot | undefined): string | undefined {
   return first && isImageSrc(first) ? first : undefined
 }
 
-/** 按镜头需求选择能力：image → text2image；video → image2video（有输入图）或 text2video */
+/** 计算 image2video 的尾帧输入图 */
+function lastFrameInputFor(shot: Shot | undefined): string | undefined {
+  return recordedLastFrame(shot)
+}
+
+/**
+ * 按镜头需求选择能力：
+ * - image → text2image（文生图）
+ * - video + 首尾帧 → firstLastFrameVideo（首尾帧生视频）
+ * - video + 单帧 → image2video（参考生视频）
+ * - video 无帧 → text2video（文生视频）
+ */
 function capabilityForShot(shot: Shot | undefined): MediaCapability {
   if (!shot || shot.shotType !== 'video') return 'text2image'
-  return imageInputFor(shot) ? 'image2video' : 'text2video'
+  const first = imageInputFor(shot)
+  const last = lastFrameInputFor(shot)
+  if (first && last) return 'firstLastFrameVideo'
+  if (first || last) return 'image2video'
+  return 'text2video'
 }
 
 const SHOT_SIZE_LABELS: Record<string, string> = {
@@ -67,19 +90,6 @@ const ANGLE_LABELS: Record<string, string> = {
   high: '俯视',
   low: '仰视',
   dutch: '倾斜',
-}
-
-/** 向前找最近一段已生成视频的资产 id，用于视频续写（参照上一段结尾继续生成） */
-export function findPreviousVideoAssetId(shots: Shot[], shotId: string): string | undefined {
-  const index = shots.findIndex((s) => s.id === shotId)
-  if (index <= 0) return undefined
-  for (let i = index - 1; i >= 0; i -= 1) {
-    const prev = shots[i]
-    if (prev.shotType !== 'video') continue
-    const last = prev.mediaAssets[prev.mediaAssets.length - 1]
-    if (last) return last
-  }
-  return undefined
 }
 
 const MOVE_LABELS: Record<string, string> = {
@@ -124,10 +134,6 @@ export function useShotActions() {
     return active ?? jobs[jobs.length - 1]
   }
 
-  function previousVideoAssetId(shotId: string): string | undefined {
-    return findPreviousVideoAssetId(storyboardStore.shots, shotId)
-  }
-
   async function generateMedia(shotId: string): Promise<Job | undefined> {
     const shot = storyboardStore.shotById(shotId)
     if (!shot) return undefined
@@ -135,10 +141,15 @@ export function useShotActions() {
     const existing = jobForShot(shotId)
     if (existing && (existing.status === 'queued' || existing.status === 'running')) return existing
 
-    const media = pluginStore.resolveInstanceCapability<MediaCapabilityProvider>(
-      'media',
-      capabilityForShot(shot),
-    )
+    const capability = capabilityForShot(shot)
+    let media = pluginStore.resolveInstanceCapability<MediaCapabilityProvider>('media', capability)
+    // 旧 Provider 未声明首尾帧能力时回退到参考生视频（忽略尾帧或按自身实现处理）
+    if (!media && capability === 'firstLastFrameVideo') {
+      media = pluginStore.resolveInstanceCapability<MediaCapabilityProvider>(
+        'media',
+        'image2video',
+      )
+    }
     if (!media) return undefined
 
     const prompt = buildShotPrompt(shot)
@@ -146,29 +157,20 @@ export function useShotActions() {
     try {
       if (shot.shotType === 'video') {
         const imageAssetId = imageInputFor(shot)
-        const continueFromPrev = shot.metadata?.continueFromPrev === true
-        const prevVideoAssetId = continueFromPrev ? previousVideoAssetId(shotId) : undefined
-        providerJob = imageAssetId
-          ? await media.generateVideo({
-              imageAssetId,
-              prompt: prompt || undefined,
-              shotRef: shotId,
-              duration: shot.camera?.duration,
-              prevVideoAssetId,
-            })
-          : await media.generateVideo({
-              prompt,
-              shotRef: shotId,
-              duration: shot.camera?.duration,
-              prevVideoAssetId,
-            })
-        // 记录 image2video 输入图与续写来源，供二次生成路由与引用
+        const lastFrameAssetId = lastFrameInputFor(shot)
+        const videoParams: ImageToVideoParams = {
+          prompt: prompt || undefined,
+          shotRef: shotId,
+          duration: shot.camera?.duration,
+        }
+        if (imageAssetId) videoParams.imageAssetId = imageAssetId
+        if (lastFrameAssetId) videoParams.lastFrameAssetId = lastFrameAssetId
+        providerJob = await media.generateVideo(videoParams)
+        // 记录 image2video 的首帧输入图，供二次生成路由与引用
         const metadata = { ...(shot.metadata ?? {}) }
         if (imageAssetId) {
           metadata.inputImageAssetId = imageAssetId
-        }
-        if (prevVideoAssetId) {
-          metadata.continuationFrom = prevVideoAssetId
+          metadata.firstFrameAssetId = imageAssetId
         }
         storyboardStore.updateShot(shotId, { metadata })
       } else {

@@ -5,7 +5,23 @@ export type PluginKind = 'provider' | 'feature' | 'pipeline'
 
 export type ProviderType = 'media' | 'llm' | 'tts' | 'storage'
 
-export type MediaCapability = 'text2image' | 'text2video' | 'image2video' | 'editImage' | 'upscale'
+export type MediaCapability =
+  | 'text2image'
+  | 'editImage'
+  | 'text2video'
+  | 'image2video'
+  | 'firstLastFrameVideo'
+  | 'upscale'
+
+/** 媒体能力的中文名：文生图 / 参考生图 / 文生视频 / 首尾帧生视频 / 参考生视频 */
+export const MEDIA_CAPABILITY_LABELS: Record<MediaCapability, string> = {
+  text2image: '文生图',
+  editImage: '参考生图',
+  text2video: '文生视频',
+  image2video: '参考生视频',
+  firstLastFrameVideo: '首尾帧生视频',
+  upscale: '超分',
+}
 
 /** 能力名集合：保持该名称向后兼容（MediaProviderCapabilities 别名引用） */
 export type ProviderCapabilities = MediaCapability[]
@@ -17,8 +33,10 @@ export type ProviderConfigField =
   | 'workflow'
   | 'workflowTemplateId'
   | 'videoWorkflowTemplateId'
+  | 'textVideoWorkflowTemplateId'
+  | 'imageVideoWorkflowTemplateId'
+  | 'firstLastFrameWorkflowTemplateId'
   | 'img2imgWorkflowTemplateId'
-  | 'continuationVideoWorkflowTemplateId'
 
 export interface PluginBase {
   id: string

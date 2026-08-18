@@ -1,5 +1,5 @@
-import { mount } from '@vue/test-utils'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import WorkflowTemplateManager from '../WorkflowTemplateManager.vue'
 import {
   listWorkflowTemplates,
@@ -19,9 +19,62 @@ function linkedGraphJson(): string {
   })
 }
 
+function uiFormatWorkflowJson(): string {
+  return JSON.stringify({
+    nodes: [
+      {
+        id: 3,
+        type: 'KSampler',
+        mode: 0,
+        inputs: [
+          { name: 'model', type: 'MODEL', link: 1 },
+          { name: 'positive', type: 'CONDITIONING', link: 2 },
+          { name: 'negative', type: 'CONDITIONING', link: 3 },
+          { name: 'latent_image', type: 'LATENT', link: 4 },
+        ],
+        outputs: [],
+        widgets_values: [42, true, 20, 8, 'euler', 'normal', 1],
+      },
+      {
+        id: 6,
+        type: 'CLIPTextEncode',
+        mode: 0,
+        inputs: [{ name: 'clip', type: 'CLIP', link: 5 }],
+        widgets_values: ['hello'],
+        outputs: [],
+      },
+      {
+        id: 7,
+        type: 'CLIPTextEncode',
+        mode: 0,
+        inputs: [{ name: 'clip', type: 'CLIP', link: 5 }],
+        widgets_values: ['neg'],
+        outputs: [],
+      },
+      {
+        id: 4,
+        type: 'CheckpointLoaderSimple',
+        mode: 0,
+        inputs: [],
+        widgets_values: ['model.safetensors'],
+        outputs: [],
+      },
+    ],
+    links: [
+      [1, 4, 0, 3, 0, 'MODEL'],
+      [2, 6, 0, 3, 1, 'CONDITIONING'],
+      [3, 7, 0, 3, 2, 'CONDITIONING'],
+      [5, 4, 1, 6, 0, 'CLIP'],
+    ],
+  })
+}
+
 describe('WorkflowTemplateManager', () => {
   beforeEach(() => {
     localStorage.clear()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('imports a workflow, detects node ids, and saves the template', async () => {
@@ -53,6 +106,49 @@ describe('WorkflowTemplateManager', () => {
     expect(listWorkflowTemplates()).toEqual([])
   })
 
+  it('imports a workflow from a local json file', async () => {
+    const w = mount(WorkflowTemplateManager)
+    const input = w.get('[data-test="wf-file-input"]')
+    const file = { name: '本地工作流.json', text: async () => linkedGraphJson() } as unknown as File
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(w.get('[data-test="wf-detected"]').text()).toContain('6')
+    await w.get('[data-test="wf-save"]').trigger('click')
+    const templates = listWorkflowTemplates()
+    expect(templates).toHaveLength(1)
+    expect(templates[0].name).toBe('本地工作流')
+    expect(templates[0].promptNodeId).toBe('6')
+    expect(templates[0].seedNodeId).toBe('3')
+  })
+
+  it('imports a UI-format workflow file (nodes/links) and converts it to API format', async () => {
+    const w = mount(WorkflowTemplateManager)
+    const input = w.get('[data-test="wf-file-input"]')
+    const file = {
+      name: '前端格式.json',
+      text: async () => uiFormatWorkflowJson(),
+    } as unknown as File
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(w.get('[data-test="wf-detected"]').text()).toContain('6')
+    expect(w.get('[data-test="wf-detected"]').text()).toContain('7')
+    await w.get('[data-test="wf-save"]').trigger('click')
+    const templates = listWorkflowTemplates()
+    expect(templates).toHaveLength(1)
+    const saved = JSON.parse(templates[0].graphJson) as Record<
+      string,
+      { class_type: string; inputs: Record<string, unknown> }
+    >
+    expect(saved['6'].inputs.text).toBe('hello')
+    expect(saved['3'].inputs.seed).toBe(42)
+    expect(saved['3'].inputs.positive).toEqual(['6', 0])
+    expect(saved['3'].inputs.negative).toEqual(['7', 0])
+  })
+
   it('lists saved templates and deletes one', async () => {
     saveWorkflowTemplate({ id: 'keep', name: '保留', graphJson: '{}' })
     saveWorkflowTemplate({ id: 'gone', name: '删除', graphJson: '{}' })
@@ -78,5 +174,53 @@ describe('WorkflowTemplateManager', () => {
     expect(config?.workflowTemplateId).toBe('cur')
     expect(config?.baseUrl).toBe('http://127.0.0.1:8188')
     expect(config?.apiKey).toBe('sk-x')
+  })
+
+  it('fetches and imports workflows from a ComfyUI address', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        const u = String(url)
+        if (u.includes('/api/workflows?')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ data: [{ id: 'wf-1', name: '远程工作流' }] }),
+          } as unknown as Response)
+        }
+        if (u.includes('/api/workflows/wf-1/content')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ workflow_json: JSON.parse(linkedGraphJson()) }),
+          } as unknown as Response)
+        }
+        if (u.endsWith('/object_info')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+          } as unknown as Response)
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        } as unknown as Response)
+      }),
+    )
+    const w = mount(WorkflowTemplateManager)
+    await w.get('[data-test="wf-remote-toggle"]').trigger('click')
+    await w.get('[data-test="wf-remote-url"]').setValue('http://127.0.0.1:8188')
+    await w.get('[data-test="wf-remote-fetch"]').trigger('click')
+    await flushPromises()
+    expect(w.findAll('[data-test="wf-remote-item"]')).toHaveLength(1)
+    expect(w.get('[data-test="wf-message"]').text()).toContain('1 个工作流')
+
+    await w.get('[data-test="wf-remote-import"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="wf-detected"]').text()).toContain('6')
+    await w.get('[data-test="wf-save"]').trigger('click')
+    expect(listWorkflowTemplates().map((t) => t.name)).toContain('远程工作流')
   })
 })
