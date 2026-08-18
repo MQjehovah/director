@@ -650,11 +650,46 @@ function assertNoMissingCriticalInputs(
 }
 
 /** 按节点 id 注入 prompt/negative/seed；缺失 prompt 节点时回退到占位符扫描或首个 CLIPTextEncode */
+interface ParamContext {
+  prompt?: string
+  negativePrompt?: string
+  seed?: number
+  duration?: number
+  inputImage?: { name?: string; subfolder?: string; type?: string }
+  lastFrame?: { name?: string; subfolder?: string; type?: string }
+}
+
+/**
+ * 参数覆盖值支持 `${占位符}`（如 ${duration}），生成时替换为镜头上下文；
+ * 非占位符原样返回；未识别的占位符返回 undefined（保持模板默认）。
+ */
+function resolveParamPlaceholder(value: unknown, ctx: ParamContext): unknown {
+  if (typeof value !== 'string') return value
+  const m = /^\$\{([^}]+)\}$/.exec(value.trim())
+  if (!m) return value
+  switch (m[1]) {
+    case 'duration':
+      return ctx.duration
+    case 'prompt':
+      return ctx.prompt
+    case 'negative_prompt':
+      return ctx.negativePrompt
+    case 'seed':
+      return ctx.seed
+    case 'image':
+      return ctx.inputImage?.name
+    case 'last_frame':
+      return ctx.lastFrame?.name
+    default:
+      return undefined
+  }
+}
+
 function writeScalarInput(
   graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
   nodeId: string,
   key: string,
-  value: string | number,
+  value: string | number | boolean,
 ): boolean {
   const node = graph[nodeId]
   if (!node) return false
@@ -1079,6 +1114,26 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
   }
 
   /** 解析工作流模板：按 id 加载并注入提示词/seed/输入图 */
+  /** 应用模板参数覆盖（key：`${节点ID}:${输入名}`，如 227:210:switch） */
+  function applyWorkflowOverrides(
+    graph: Record<string, { class_type: string; inputs: Record<string, unknown> }>,
+    overrides: Record<string, unknown> | undefined,
+    ctx: ParamContext,
+  ): void {
+    if (!overrides || typeof overrides !== 'object') return
+    for (const [key, value] of Object.entries(overrides)) {
+      const sep = key.lastIndexOf(':')
+      if (sep <= 0 || sep >= key.length - 1) continue
+      const nodeId = key.slice(0, sep)
+      const input = key.slice(sep + 1)
+      const node = graph[nodeId]
+      if (!node) continue
+      const resolved = resolveParamPlaceholder(value, ctx)
+      if (resolved === undefined) continue
+      node.inputs[input] = resolved
+    }
+  }
+
   function buildGraph(
     templateId: string | undefined,
     prompt: string,
@@ -1094,11 +1149,20 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       throw new Error('ComfyUI 工作流模板不存在，请在「设置」中重新选择或导入模板。')
     }
     const graph = assertFreshTemplate(template)
-    const injected = injectIntoNodes(stripUiOnlyNodes(graph), prompt, negativePrompt, seed, {
+    const stripped = stripUiOnlyNodes(graph)
+    applyWorkflowOverrides(stripped, template.parameterOverrides, {
+      prompt,
+      negativePrompt,
+      seed,
+      inputImage,
+      duration,
+      lastFrame,
+    })
+    const injected = injectIntoNodes(stripped, prompt, negativePrompt, seed, {
       promptNodeId: template.promptNodeId,
       negativeNodeId: template.negativeNodeId,
-        seedNodeId: template.seedNodeId,
-      })
+      seedNodeId: template.seedNodeId,
+    })
       applyDynamicInputs(injected, { inputImage, duration, lastFrame })
       assertNoMissingCriticalInputs(injected)
       return injected
@@ -1128,7 +1192,14 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       throw new Error('ComfyUI 图生图工作流模板不存在，请在「设置」中重新导入模板。')
     }
     const graph = assertFreshTemplate(template)
-    const injected = injectIntoNodes(stripUiOnlyNodes(graph), prompt, negativePrompt, seed, {
+    const stripped = stripUiOnlyNodes(graph)
+    applyWorkflowOverrides(stripped, template.parameterOverrides, {
+      prompt,
+      negativePrompt,
+      seed,
+      inputImage: uploaded,
+    })
+    const injected = injectIntoNodes(stripped, prompt, negativePrompt, seed, {
       promptNodeId: template.promptNodeId,
       negativeNodeId: template.negativeNodeId,
       seedNodeId: template.seedNodeId,

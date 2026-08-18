@@ -45,6 +45,7 @@ export interface WorkflowUiGraph {
 export interface SubgraphEndpoint {
   name?: string
   linkIds?: number[]
+  label?: string
 }
 
 export interface SubgraphLink {
@@ -266,6 +267,44 @@ function parseSubgraphDefs(parsed: unknown): Map<string, SubgraphDef> {
     if (isRecord(d) && typeof d.id === 'string') out.set(d.id, d as unknown as SubgraphDef)
   }
   return out
+}
+
+/**
+ * 从 UI 格式工作流中提取参数显示名：
+ * 子图 def.inputs 暴露的参数（实例输入 label 优先，如 enable_turbo_mode / clip_name），
+ * 沿 -10 边界链接映射到内部节点输入，返回 `${实例ID}:${内部ID}:${输入名}` → label。
+ */
+export function detectParameterLabels(parsed: unknown): Record<string, string> {
+  const labels: Record<string, string> = {}
+  if (!isRecord(parsed) || !Array.isArray(parsed.nodes) || !isRecord(parsed.definitions)) {
+    return labels
+  }
+  const subgraphDefs = parseSubgraphDefs(parsed)
+  for (const node of parsed.nodes) {
+    if (!isRecord(node) || node.id === undefined || typeof node.type !== 'string') continue
+    const def = subgraphDefs.get(node.type)
+    if (!def) continue
+    const inputNodeId = def.inputNode?.id ?? -10
+    for (const ep of def.inputs ?? []) {
+      if (!ep.name) continue
+      // 实例输入 label 优先（如 enable_turbo_mode），其次 def.inputs 的 label（如 clip_name）
+      const instanceEntry = Array.isArray(node.inputs)
+        ? (node.inputs as WorkflowNodeInputEntry[]).find((e) => e.name === ep.name)
+        : undefined
+      const label = instanceEntry?.label ?? ep.label
+      if (typeof label !== 'string' || label.length === 0) continue
+      for (const lid of ep.linkIds ?? []) {
+        const link = (def.links ?? []).find((l) => l.id === lid)
+        if (!link || link.origin_id !== inputNodeId) continue
+        const inner = (def.nodes ?? []).find((n) => n.id === link.target_id)
+        const inputName = inner?.inputs?.[link.target_slot]?.name
+        if (inner?.id !== undefined && inputName) {
+          labels[`${node.id}:${inner.id}:${inputName}`] = label
+        }
+      }
+    }
+  }
+  return labels
 }
 
 /** 无 /object_info 时的 control_after_generate 占位名（与 fallbackUnits 的 controlAfter 对应） */

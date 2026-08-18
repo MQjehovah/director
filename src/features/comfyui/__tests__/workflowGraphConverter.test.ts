@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { convertWorkflowJsonToApiGraph } from '../workflowGraphConverter'
+import {
+  convertWorkflowJsonToApiGraph,
+  detectParameterLabels,
+} from '../workflowGraphConverter'
 import type { ObjectInfoNodeDef } from '../workflowGraphConverter'
 
 const ksamplerDef: ObjectInfoNodeDef = {
@@ -1380,6 +1383,61 @@ describe('workflowGraphConverter', () => {
     expect(g['227:225'].inputs.value).toBe(4)
     expect(g['227:131'].inputs['values.a']).toEqual(['227:132', 0])
     expect(g['92'].inputs.video).toEqual(['227:215', 0])
+  })
+
+  it('maps exposed subgraph parameter labels to inner node inputs', () => {
+    const parsed = {
+      nodes: [
+        {
+          id: 227,
+          type: 'sg-uuid',
+          mode: 0,
+          inputs: [
+            { name: 'switch', label: 'enable_turbo_mode', type: 'BOOLEAN', widget: { name: 'switch' } },
+            { name: 'type', label: 'clip_name', type: 'COMBO', widget: { name: 'type' } },
+          ],
+          outputs: [],
+          widgets_values: [],
+        },
+      ],
+      definitions: {
+        subgraphs: [
+          {
+            id: 'sg-uuid',
+            inputNode: { id: -10 },
+            outputNode: { id: -20 },
+            inputs: [
+              { name: 'switch', label: 'turbo_mode_enable', linkIds: [501] },
+              { name: 'type', label: 'clip_name', linkIds: [498] },
+            ],
+            nodes: [
+              {
+                id: 210,
+                type: 'ComfySwitchNode',
+                mode: 0,
+                inputs: [{ name: 'switch', type: 'BOOLEAN' }],
+                outputs: [],
+              },
+              {
+                id: 212,
+                type: 'CLIPLoader',
+                mode: 0,
+                inputs: [{ name: 'clip_name', type: 'COMBO' }],
+                outputs: [],
+              },
+            ],
+            links: [
+              { id: 501, origin_id: -10, origin_slot: 0, target_id: 210, target_slot: 0, type: 'BOOLEAN' },
+              { id: 498, origin_id: -10, origin_slot: 1, target_id: 212, target_slot: 0, type: 'COMBO' },
+            ],
+          },
+        ],
+      },
+    }
+    expect(detectParameterLabels(parsed)).toEqual({
+      '227:210:switch': 'enable_turbo_mode',
+      '227:212:clip_name': 'clip_name',
+    })
   })
 
   it('keeps widget positions aligned when a legacy loader input is linked but unresolved', () => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Button, Input, Textarea } from '../../components/ui'
+import { Button, Dialog, Input, Select, Switch, Textarea } from '../../components/ui'
+import type { SelectOption } from '../../components/ui'
 import {
   deleteWorkflowTemplate,
   importWorkflowGraph,
@@ -9,13 +10,17 @@ import {
   saveWorkflowTemplate,
 } from '../comfyui/workflowStore'
 import type { WorkflowTemplate } from '../comfyui/workflowStore'
+import type { WorkflowParameter } from '../comfyui/workflowStore'
 import { loadProviderConfig } from './httpBackendConfig'
 import {
   MEDIA_COMFYUI_ID,
   isStaleBrokenTemplate,
   repairLegacyMisalignedGraph,
 } from '../../plugins/providers/media-comfyui'
-import { convertWorkflowJsonToApiGraph } from '../comfyui/workflowGraphConverter'
+import {
+  convertWorkflowJsonToApiGraph,
+  detectParameterLabels,
+} from '../comfyui/workflowGraphConverter'
 import type { ApiWorkflowGraph, ObjectInfoNodeDef } from '../comfyui/workflowGraphConverter'
 import {
   listComfyUIWorkflows,
@@ -30,6 +35,17 @@ const draft = ref<WorkflowTemplate | undefined>(undefined)
 const draftWarnings = ref<string[]>([])
 const message = ref<{ kind: 'error' | 'success' | 'info'; text: string } | undefined>(undefined)
 const templates = ref<WorkflowTemplate[]>(listWorkflowTemplates())
+const paramEditor = ref<
+  { template: WorkflowTemplate; draft: Record<string, unknown> } | undefined
+>(undefined)
+
+const placeholderOptions: SelectOption[] = [
+  { value: '', label: '占位符' },
+  { value: '${duration}', label: '分镜时长 ${duration}' },
+  { value: '${prompt}', label: '提示词 ${prompt}' },
+  { value: '${negative_prompt}', label: '负面提示词 ${negative_prompt}' },
+  { value: '${seed}', label: '随机种子 ${seed}' },
+]
 
 // 从 ComfyUI 拉取（默认折叠，保持面板紧凑）
 const remoteOpen = ref(false)
@@ -93,7 +109,11 @@ function importJsonText(
   const repaired = repairLegacyMisalignedGraph(converted.graph)
   const warnings = [...converted.warnings]
   if (repaired) warnings.push(repairWarning)
-  const result = importWorkflowObject(targetName, converted.graph as ApiWorkflowGraph)
+  const result = importWorkflowObject(
+    targetName,
+    converted.graph as ApiWorkflowGraph,
+    detectParameterLabels(parsed),
+  )
   if ('error' in result) {
     return { error: result.error, warnings }
   }
@@ -218,33 +238,6 @@ async function onImportRemote(item: RemoteWorkflowItem): Promise<void> {
   }
 }
 
-/** 把拉取到的原始工作流 JSON 填入文本框，便于排查转换问题或手动检查 */
-async function onViewRawRemote(item: RemoteWorkflowItem): Promise<void> {
-  message.value = undefined
-  remoteBusy.value = true
-  try {
-    const apiKey = loadProviderConfig(MEDIA_COMFYUI_ID)?.apiKey
-    const key = typeof apiKey === 'string' ? apiKey : undefined
-    const content = await fetchComfyUIWorkflowContent(remoteBaseUrl.value, item, key)
-    if (!content.ok || content.workflowJson === undefined) {
-      message.value = { kind: 'error', text: content.error ?? '获取工作流内容失败' }
-      return
-    }
-    name.value = item.name
-    graphJson.value = JSON.stringify(content.workflowJson, null, 2)
-    draft.value = undefined
-    draftWarnings.value = []
-    message.value = {
-      kind: 'info',
-      text: '已填入 ComfyUI 返回的原始工作流 JSON，可直接检查/复制，或点「导入并识别节点」转换。',
-    }
-  } catch (err) {
-    message.value = { kind: 'error', text: err instanceof Error ? err.message : String(err) }
-  } finally {
-    remoteBusy.value = false
-  }
-}
-
 function onSave(): void {
   if (!draft.value) return
   saveWorkflowTemplate({ ...draft.value, name: name.value.trim() || draft.value.name })
@@ -258,6 +251,49 @@ function onSave(): void {
 function onDelete(id: string): void {
   deleteWorkflowTemplate(id)
   refresh()
+}
+
+function paramKey(p: WorkflowParameter): string {
+  return `${p.nodeId}:${p.input}`
+}
+
+function paramDraftValue(p: WorkflowParameter): unknown {
+  if (!paramEditor.value) return p.value
+  const key = paramKey(p)
+  return key in paramEditor.value.draft ? paramEditor.value.draft[key] : p.value
+}
+
+function paramPlaceholderValue(p: WorkflowParameter): string {
+  const v = paramDraftValue(p)
+  return typeof v === 'string' && placeholderOptions.some((o) => o.value === v) ? v : ''
+}
+
+function setParamDraft(p: WorkflowParameter, value: unknown): void {
+  if (!paramEditor.value) return
+  const draft = { ...paramEditor.value.draft }
+  if (value === undefined || value === null || value === '') {
+    delete draft[paramKey(p)]
+  } else {
+    draft[paramKey(p)] = value
+  }
+  paramEditor.value = { ...paramEditor.value, draft }
+}
+
+function openParamEditor(t: WorkflowTemplate): void {
+  paramEditor.value = { template: t, draft: { ...(t.parameterOverrides ?? {}) } }
+}
+
+function closeParamEditor(): void {
+  paramEditor.value = undefined
+}
+
+function saveParamEditor(): void {
+  const editor = paramEditor.value
+  if (!editor) return
+  saveWorkflowTemplate({ ...editor.template, parameterOverrides: { ...editor.draft } })
+  paramEditor.value = undefined
+  refresh()
+  message.value = { kind: 'success', text: '参数已保存' }
 }
 </script>
 
@@ -390,16 +426,6 @@ function onDelete(id: string): void {
             >
               导入
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              class="shrink-0"
-              :disabled="remoteBusy"
-              data-test="wf-remote-raw"
-              @click="onViewRawRemote(item)"
-            >
-              原始
-            </Button>
           </li>
         </ul>
         <p v-else-if="remoteMode === 'userdata'" class="text-[10px] text-ink-muted">
@@ -433,6 +459,9 @@ function onDelete(id: string): void {
             </span>
           </div>
           <div class="flex shrink-0 items-center gap-1.5">
+            <Button size="sm" variant="outline" data-test="wf-params" @click="openParamEditor(t)">
+              参数编辑
+            </Button>
             <Button size="sm" variant="ghost" data-test="wf-delete" @click="onDelete(t.id)">删除</Button>
           </div>
         </li>
@@ -441,5 +470,75 @@ function onDelete(id: string): void {
     <p v-else class="mt-3 text-xs text-ink-muted" data-test="wf-empty">
       暂无已保存的模板。
     </p>
+
+    <Dialog :open="!!paramEditor" title="工作流参数" @close="closeParamEditor">
+      <template v-if="paramEditor">
+        <p class="mb-3 text-xs text-ink-muted">
+          {{ paramEditor.template.name }}：参数会在每次生成时覆盖模板默认值。
+        </p>
+        <p
+          v-if="(paramEditor.template.parameters ?? []).length === 0"
+          class="text-xs text-ink-muted"
+          data-test="param-empty"
+        >
+          该模板未识别到可编辑参数。
+        </p>
+        <div
+          v-for="p in paramEditor.template.parameters ?? []"
+          :key="paramKey(p)"
+          class="flex items-center justify-between gap-3 border-b border-edge py-2"
+          data-test="param-row"
+        >
+          <span class="min-w-0 truncate text-xs text-ink">{{ p.label }}</span>
+          <span class="flex shrink-0 items-center gap-1.5">
+            <Switch
+              v-if="p.type === 'boolean'"
+              :model-value="paramDraftValue(p) === true"
+              :data-test="`param-${paramKey(p)}`"
+              @update:model-value="setParamDraft(p, $event)"
+            />
+            <Input
+              v-else-if="p.type === 'number'"
+              class="!h-8 w-24"
+              type="number"
+              :model-value="String(paramDraftValue(p) ?? '')"
+              :data-test="`param-${paramKey(p)}`"
+              @update:model-value="setParamDraft(p, $event === '' ? undefined : Number($event))"
+            />
+            <Input
+              v-else
+              class="!h-8 w-40"
+              :model-value="String(paramDraftValue(p) ?? '')"
+              :data-test="`param-${paramKey(p)}`"
+              @update:model-value="setParamDraft(p, $event)"
+            />
+            <Select
+              class="!h-8 w-28"
+              :model-value="paramPlaceholderValue(p)"
+              :options="placeholderOptions"
+              :data-test="`param-ph-${paramKey(p)}`"
+              @update:model-value="setParamDraft(p, $event || undefined)"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              class="!px-1.5 !text-[10px]"
+              :data-test="`param-reset-${paramKey(p)}`"
+              @click="setParamDraft(p, undefined)"
+            >
+              重置
+            </Button>
+          </span>
+        </div>
+      </template>
+      <template #footer>
+        <Button size="sm" variant="ghost" data-test="param-cancel" @click="closeParamEditor">
+          取消
+        </Button>
+        <Button size="sm" variant="primary" data-test="param-save" @click="saveParamEditor">
+          保存
+        </Button>
+      </template>
+    </Dialog>
   </section>
 </template>

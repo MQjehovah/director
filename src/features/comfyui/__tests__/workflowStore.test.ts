@@ -44,6 +44,34 @@ describe('workflowStore', () => {
     expect(result.seedNodeId).toBe('3')
   })
 
+  it('collects scalar workflow parameters and skips dynamic keys', () => {
+    const result = importWorkflowGraph(
+      JSON.stringify({
+        '227:210': {
+          class_type: 'ComfySwitchNode',
+          inputs: { switch: false, on_false: ['227:211', 0], on_true: ['227:209', 0] },
+        },
+        '227:212': {
+          class_type: 'CLIPLoader',
+          inputs: { clip_name: 'qwen.safetensors', type: 'minimax', device: 'default' },
+        },
+        '227:215': {
+          class_type: 'MiniMaxH3ReferenceToVideo',
+          inputs: { prompt: 'x', ref_image_size: 'match' },
+        },
+      }),
+      '参数',
+    )
+    if ('error' in result) throw new Error(result.error)
+    const params = result.parameters ?? []
+    expect(
+      params.some((p) => p.nodeId === '227:210' && p.input === 'switch' && p.type === 'boolean'),
+    ).toBe(true)
+    expect(params.some((p) => p.nodeId === '227:212' && p.input === 'type')).toBe(true)
+    // prompt 是每次生成动态注入的键，不作为可编辑参数
+    expect(params.some((p) => p.input === 'prompt')).toBe(false)
+  })
+
   it('falls back to the first CLIPTextEncode when no KSampler link exists', () => {
     const result = importWorkflowGraph(
       JSON.stringify({

@@ -177,6 +177,44 @@ describe('WorkflowTemplateManager', () => {
     expect(listWorkflowTemplates().map((t) => t.id)).toEqual(['fresh'])
   })
 
+  it('edits template parameters in a dialog and saves overrides', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-params',
+      name: '参数模板',
+      graphJson: '{}',
+      parameters: [
+        {
+          nodeId: '227:210',
+          input: 'switch',
+          label: 'enable_turbo_mode',
+          type: 'boolean',
+          value: false,
+        },
+        {
+          nodeId: '227:212',
+          input: 'device',
+          label: 'CLIPLoader · device',
+          type: 'string',
+          value: 'default',
+        },
+      ],
+    })
+    const w = mount(WorkflowTemplateManager, { global: { stubs: { teleport: true } } })
+    await w.get('[data-test="wf-params"]').trigger('click')
+    expect(w.findAll('[data-test="param-row"]')).toHaveLength(2)
+    const checkbox = w.get('[data-test="param-227:210:switch"]').find('input')
+    await checkbox.setValue(true)
+    const deviceInput = w.get('[data-test="param-227:212:device"]')
+    await deviceInput.setValue('cpu')
+    const placeholder = w.get('[data-test="param-ph-227:212:device"]')
+    await placeholder.setValue('${duration}')
+    await w.get('[data-test="param-save"]').trigger('click')
+    expect(listWorkflowTemplates()[0].parameterOverrides).toEqual({
+      '227:210:switch': true,
+      '227:212:device': '${duration}',
+    })
+  })
+
   it('repairs and imports an expanded API graph with stale shifted CLIPLoader values', async () => {
     const w = mount(WorkflowTemplateManager)
     await w.get('[data-test="wf-graph"]').setValue(
@@ -257,10 +295,5 @@ describe('WorkflowTemplateManager', () => {
     expect(w.get('[data-test="wf-message"]').text()).toContain('导入并保存')
     // 拉取导入直接保存，不再需要二次点击「保存模板」
     expect(listWorkflowTemplates().map((t) => t.name)).toContain('远程工作流')
-
-    // 「原始」按钮把 ComfyUI 返回的未转换 JSON 填入文本框
-    await w.get('[data-test="wf-remote-raw"]').trigger('click')
-    await flushPromises()
-    expect(w.get('[data-test="wf-message"]').text()).toContain('原始工作流 JSON')
   })
 })

@@ -7,7 +7,19 @@ export interface WorkflowTemplate {
   promptNodeId?: string
   negativeNodeId?: string
   seedNodeId?: string
+  /** 工作流标量参数（如 enable_turbo_mode / 模型名 / 采样器等），可在 Provider 配置中覆盖 */
+  parameters?: WorkflowParameter[]
+  /** 该模板的参数覆盖（key：`${节点ID}:${输入名}`），每次生成时写入工作流 */
+  parameterOverrides?: Record<string, unknown>
   createdAt?: string
+}
+
+export interface WorkflowParameter {
+  nodeId: string
+  input: string
+  label: string
+  type: 'string' | 'number' | 'boolean'
+  value: string | number | boolean
 }
 
 export type ImportWorkflowResult = WorkflowTemplate | { error: string }
@@ -121,6 +133,37 @@ function detectNodes(graph: WorkflowGraph): {
   return { promptNodeId, negativeNodeId, seedNodeId }
 }
 
+/**
+ * 收集工作流中的标量参数（字符串/数字/布尔输入），供 Provider 配置覆盖。
+ * 排除每次生成动态注入的 prompt/text/negative_prompt/seed/noise_seed。
+ */
+const DYNAMIC_PARAM_KEYS = new Set(['prompt', 'text', 'negative_prompt', 'seed', 'noise_seed'])
+
+function detectParameters(
+  graph: WorkflowGraph,
+  labels: Record<string, string> = {},
+): WorkflowParameter[] {
+  const out: WorkflowParameter[] = []
+  for (const [nodeId, node] of Object.entries(graph)) {
+    for (const [input, value] of Object.entries(node.inputs)) {
+      if (input === 'widgets_values' || DYNAMIC_PARAM_KEYS.has(input)) continue
+      const scalar =
+        typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+      if (!scalar) continue
+      out.push({
+        nodeId,
+        input,
+        label:
+          labels[`${nodeId}:${input}`] ??
+          `${node.class_type} · ${input}`,
+        type: typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? 'number' : 'string',
+        value,
+      })
+    }
+  }
+  return out
+}
+
 function readAll(): WorkflowTemplate[] {
   let raw: string | null = null
   try {
@@ -174,6 +217,7 @@ export function deleteWorkflowTemplate(id: string): void {
 export function importWorkflowObject(
   name: string,
   graph: WorkflowGraph,
+  parameterLabels?: Record<string, string>,
 ): ImportWorkflowResult {
   const { promptNodeId, negativeNodeId, seedNodeId } = detectNodes(graph)
   return {
@@ -183,6 +227,7 @@ export function importWorkflowObject(
     promptNodeId,
     negativeNodeId,
     seedNodeId,
+    parameters: detectParameters(graph, parameterLabels),
     createdAt: new Date().toISOString(),
   }
 }

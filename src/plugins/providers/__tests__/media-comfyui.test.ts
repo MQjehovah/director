@@ -482,6 +482,84 @@ describe('media-comfyui provider', () => {
     expect(body.prompt['227:132'].inputs.value).toBe(8)
   })
 
+  it('applies provider workflow parameter overrides on every generation', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-params',
+      name: '参数模板',
+      graphJson: JSON.stringify({
+        '227:210': {
+          class_type: 'ComfySwitchNode',
+          inputs: { switch: false, on_false: ['227:211', 0], on_true: ['227:209', 0] },
+        },
+        '227:209': { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'x' } },
+        '227:211': { class_type: 'UNETLoader', inputs: { unet_name: 'y' } },
+        '227:212': {
+          class_type: 'CLIPLoader',
+          inputs: { clip_name: 'qwen.safetensors', type: 'minimax', device: 'default' },
+        },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+      parameterOverrides: { '227:210:switch': true, '227:212:device': 'cpu' },
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      textVideoWorkflowTemplateId: 'tpl-params',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pparam' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateVideo({ prompt: 'x' })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.prompt['227:210'].inputs.switch).toBe(true)
+    expect(body.prompt['227:212'].inputs.device).toBe('cpu')
+    // 未覆盖的参数保持模板默认
+    expect(body.prompt['227:212'].inputs.clip_name).toBe('qwen.safetensors')
+  })
+
+  it('resolves ${placeholder} parameter overrides from the shot context', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-ph',
+      name: '占位符模板',
+      graphJson: JSON.stringify({
+        '227:132': { class_type: 'PrimitiveFloat', inputs: { value: 5 } },
+        '227:215': {
+          class_type: 'MiniMaxH3ReferenceToVideo',
+          inputs: { prompt: '默认', ref_image_size: 'match' },
+        },
+        '1': { class_type: 'CLIPTextEncode', inputs: { text: '{prompt}' } },
+      }),
+      promptNodeId: '1',
+      parameterOverrides: {
+        '227:132:value': '${duration}',
+        '227:215:ref_image_size': '${unknown_placeholder}',
+      },
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      textVideoWorkflowTemplateId: 'tpl-ph',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pph' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) =>
+        String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+      ),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateVideo({ prompt: 'x', duration: 8 })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    // ${duration} 被镜头时长替换并注入
+    expect(body.prompt['227:132'].inputs.value).toBe(8)
+    // 未识别的占位符不覆盖，保持模板默认
+    expect(body.prompt['227:215'].inputs.ref_image_size).toBe('match')
+  })
+
   it('accepts the reference MiniMax H3 API export as a template and submits it intact', async () => {
     // 与用户从应用导出的正确 MiniMax H3 参考生视频 API 图一致（省略 _meta）
     const reference: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {
