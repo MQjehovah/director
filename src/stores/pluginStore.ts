@@ -6,6 +6,7 @@ import type {
   FeatureModuleDef,
   FeaturePlugin,
   MediaCapability,
+  PipelineStepDef,
   Plugin,
   ProviderPlugin,
   ProviderType,
@@ -15,6 +16,7 @@ import {
   resolveFeatureComponent,
   resolveFeatureViewProps,
 } from '../core/plugin/features'
+import { collectPipelineStepDefs, pipelineStepDefByKind } from '../core/plugin/pipeline'
 import type { LLMProvider, MediaProvider, StorageProvider, TTSProvider } from '../providers'
 
 export const usePluginStore = defineStore('plugin', () => {
@@ -164,6 +166,19 @@ export const usePluginStore = defineStore('plugin', () => {
     return resolveFeatureViewProps(r, key)
   }
 
+  /** 已启用 PipelinePlugin 的步骤定义，按 order 排序，供画布「添加节点」使用。 */
+  function pipelineStepDefs(): PipelineStepDef[] {
+    const r = registry.value
+    if (!r) return []
+    return collectPipelineStepDefs(r)
+  }
+
+  function pipelineStepDef(kind: string): PipelineStepDef | undefined {
+    const r = registry.value
+    if (!r) return undefined
+    return pipelineStepDefByKind(r, kind)
+  }
+
   return {
     activeProviders,
     init,
@@ -184,5 +199,7 @@ export const usePluginStore = defineStore('plugin', () => {
     featureModules,
     featureComponent,
     featureViewProps,
+    pipelineStepDefs,
+    pipelineStepDef,
   }
 })

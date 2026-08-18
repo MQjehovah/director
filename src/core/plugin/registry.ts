@@ -1,5 +1,11 @@
 import { EventBus } from '../bus'
-import type { Plugin, PluginEvents, ProviderPlugin, ProviderType } from './types'
+import type {
+  Plugin,
+  PluginEvents,
+  PipelinePlugin,
+  ProviderPlugin,
+  ProviderType,
+} from './types'
 
 export class PluginRegistry {
   private plugins = new Map<string, Plugin>()
@@ -39,6 +45,18 @@ export class PluginRegistry {
 
   resolveEnabledProvider(providerType: ProviderType): ProviderPlugin[] {
     return this.resolveProvider(providerType).filter((p) => p.enabled)
+  }
+
+  resolvePipelinePlugins(): PipelinePlugin[] {
+    const out: PipelinePlugin[] = []
+    for (const p of this.plugins.values()) {
+      if (p.kind === 'pipeline') out.push(p)
+    }
+    return out
+  }
+
+  resolveEnabledPipelinePlugins(): PipelinePlugin[] {
+    return this.resolvePipelinePlugins().filter((p) => p.enabled)
   }
 
   list(): Plugin[] {

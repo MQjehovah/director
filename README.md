@@ -42,7 +42,7 @@ src/
 ├── plugins/
 │   ├── providers/       # 后端实现：mock / ComfyUI / DashScope / IndexedDB / HTTP LLM
 │   ├── features/        # 功能模块插件（角色/剧本/分镜/成片/任务/全流程/设置）
-│   └── register.ts      # 应用启动时注册全部插件（Provider + Feature）
+│   └── register.ts      # 应用启动时注册全部插件（Provider + Feature + Pipeline）
 ├── stores/              # Pinia 状态（project/character/script/storyboard/job/plugin）
 ├── features/            # 业务功能（characters/script/storyboard/player/jobs/composer/settings/comfyui）
 └── components/          # UI 基础件 + 布局
@@ -108,6 +108,41 @@ export function createHelloFeaturePlugin(): FeaturePlugin {
 ```
 
 在 `register.ts` 的 `buildAppPlugins()` 中 `registry.register(createHelloFeaturePlugin())`，导航与主区自动出现该模块。
+
+### 添加自定义管道步骤
+
+1. 在 `src/plugins/pipeline/` 新建文件，实现 `PipelineStep`（`run(ctx)` 内可读 `ctx.input`、写 `ctx.setResult` / `ctx.fail`），导出 `createXxxPipelinePlugin()`。
+2. 在 `src/plugins/register.ts` 的 `buildAppPlugins()` 中注册一行。
+
+示例：
+
+```ts
+// src/plugins/pipeline/hello.ts
+import type { PipelinePlugin } from '../../core/plugin/types'
+
+export function createHelloPipelinePlugin(): PipelinePlugin {
+  return {
+    id: 'pipeline-hello',
+    name: '示例',
+    kind: 'pipeline',
+    enabled: true,
+    step: {
+      kind: 'hello',
+      label: '示例步骤',
+      order: 99,
+      factory: () => ({
+        id: 'hello',
+        title: '示例步骤',
+        run: async (ctx) => {
+          ctx.setResult('hello', { ok: true })
+        },
+      }),
+    },
+  }
+}
+```
+
+注册后画布「添加节点」面板自动出现该步骤，可参与连线、排序与一键执行。
 
 ## 后端对接指南
 

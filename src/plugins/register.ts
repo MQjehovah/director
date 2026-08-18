@@ -15,6 +15,15 @@ import {
   createSettingsFeaturePlugin,
   createAgentFeaturePlugin,
 } from './features'
+import {
+  createAssemblePipelinePlugin,
+  createCutPipelinePlugin,
+  createPortraitPipelinePlugin,
+  createRenderPipelinePlugin,
+  createSceneArtPipelinePlugin,
+  createScriptPipelinePlugin,
+  createVoicePipelinePlugin,
+} from './pipeline'
 import { loadProviderConfigs } from '../features/settings/httpBackendConfig'
 
 export function buildAppPlugins(): PluginRegistry {
@@ -31,6 +40,13 @@ export function buildAppPlugins(): PluginRegistry {
   registry.register(createPipelineFeaturePlugin())
   registry.register(createSettingsFeaturePlugin())
   registry.register(createAgentFeaturePlugin())
+  registry.register(createScriptPipelinePlugin())
+  registry.register(createCutPipelinePlugin())
+  registry.register(createSceneArtPipelinePlugin())
+  registry.register(createPortraitPipelinePlugin())
+  registry.register(createRenderPipelinePlugin())
+  registry.register(createVoicePipelinePlugin())
+  registry.register(createAssemblePipelinePlugin())
   return registry
 }
 

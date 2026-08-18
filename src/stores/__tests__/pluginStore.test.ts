@@ -2,11 +2,31 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { defineComponent } from 'vue'
 import { PluginRegistry } from '../../core'
-import type { FeaturePlugin, ProviderPlugin } from '../../core'
+import type { FeaturePlugin, PipelinePlugin, ProviderPlugin } from '../../core'
 import { createStubMediaPlugin } from '../../features/shared/__tests__/stubProviders'
 import { usePluginStore } from '../pluginStore'
 
 const Panel = defineComponent({ name: 'TestPanel', render: () => null })
+
+function makePipelinePlugin(
+  id: string,
+  kind: string,
+  order?: number,
+  enabled = true,
+): PipelinePlugin {
+  return {
+    id,
+    name: kind,
+    kind: 'pipeline',
+    enabled,
+    step: {
+      kind,
+      label: kind,
+      order,
+      factory: () => ({ id: kind, title: kind, enabled: true, run: async () => undefined }),
+    },
+  }
+}
 
 function makeFeaturePlugin(
   id: string,
@@ -265,6 +285,27 @@ describe('plugin store', () => {
       expect(s.resolveInstanceCapability<{ id: string }>('media', 'text2image')?.id).toBe(
         'stub-media',
       )
+    })
+  })
+
+  describe('pipeline step accessors', () => {
+    it('collects enabled step defs sorted by order', () => {
+      const s = usePluginStore()
+      const r = new PluginRegistry()
+      r.register(makePipelinePlugin('p-b', 'b', 2))
+      r.register(makePipelinePlugin('p-a', 'a', 1))
+      r.register(makePipelinePlugin('p-off', 'off', 3, false))
+      s.init(r)
+      expect(s.pipelineStepDefs().map((d) => d.kind)).toEqual(['a', 'b'])
+      expect(s.pipelineStepDef('b')?.label).toBe('b')
+      expect(s.pipelineStepDef('off')).toBeUndefined()
+      expect(s.pipelineStepDef('missing')).toBeUndefined()
+    })
+
+    it('returns no step defs before init', () => {
+      const s = usePluginStore()
+      expect(s.pipelineStepDefs()).toEqual([])
+      expect(s.pipelineStepDef('a')).toBeUndefined()
     })
   })
 

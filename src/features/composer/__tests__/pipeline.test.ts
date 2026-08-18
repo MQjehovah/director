@@ -19,6 +19,15 @@ import {
   createStubTTSPlugin,
 } from '../../shared/__tests__/stubProviders'
 import { PluginRegistry } from '../../../core'
+import {
+  createAssemblePipelinePlugin,
+  createCutPipelinePlugin,
+  createPortraitPipelinePlugin,
+  createRenderPipelinePlugin,
+  createSceneArtPipelinePlugin,
+  createScriptPipelinePlugin,
+  createVoicePipelinePlugin,
+} from '../../../plugins/pipeline'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useScriptStore } from '../../../stores/scriptStore'
 import { useStoryboardStore } from '../../../stores/storyboardStore'
@@ -26,11 +35,22 @@ import { useJobStore } from '../../../stores/jobStore'
 import PipelineEditor from '../PipelineEditor.vue'
 import ComposerPanel from '../ComposerPanel.vue'
 
+function initPipelinePlugins(registry: PluginRegistry): void {
+  registry.register(createScriptPipelinePlugin())
+  registry.register(createCutPipelinePlugin())
+  registry.register(createSceneArtPipelinePlugin())
+  registry.register(createPortraitPipelinePlugin())
+  registry.register(createRenderPipelinePlugin())
+  registry.register(createVoicePipelinePlugin())
+  registry.register(createAssemblePipelinePlugin())
+}
+
 function initProviders(opts: { llm?: boolean; media?: boolean; tts?: boolean } = {}): void {
   const registry = new PluginRegistry()
   if (opts.llm) registry.register(createStubLLMPlugin())
   if (opts.media) registry.register(createStubMediaPlugin({ delayMs: 20 }))
   if (opts.tts) registry.register(createStubTTSPlugin())
+  initPipelinePlugins(registry)
   usePluginStore().init(registry)
 }
 
@@ -319,6 +339,7 @@ describe('pipeline editor', () => {
 describe('composer panel', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    initProviders()
   })
 
   it('renders the idea input, pipeline nodes and an execute button', async () => {

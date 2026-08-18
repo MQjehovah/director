@@ -1,4 +1,5 @@
 import type { Component } from 'vue'
+import type { PipelineStep } from '../pipeline/types'
 
 export type PluginKind = 'provider' | 'feature' | 'pipeline'
 
@@ -51,9 +52,16 @@ export interface FeaturePlugin extends PluginBase {
   viewProps?: Record<string, unknown>
 }
 
+export interface PipelineStepDef {
+  kind: string
+  label: string
+  order?: number
+  factory: () => PipelineStep
+}
+
 export interface PipelinePlugin extends PluginBase {
   kind: 'pipeline'
-  steps?: string[]
+  step: PipelineStepDef
 }
 
 export type Plugin = ProviderPlugin | FeaturePlugin | PipelinePlugin

@@ -1,32 +1,13 @@
-export type StepRunStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+import type { PipelineContext, PipelineStep, RunReport, StepRunStatus } from '../../core/pipeline/types'
 
-export interface StepStatusInfo {
-  status: StepRunStatus
-  error?: string
-}
-
-export interface PipelineContext {
-  input?: unknown
-  results: Record<string, unknown>
-  errors: Record<string, string>
-  setResult(id: string, value: unknown): void
-  fail(id: string, error: string): void
-}
-
-export interface PipelineStep<T = unknown> {
-  id: string
-  title?: string
-  enabled?: boolean
-  skip?: boolean
-  run: (ctx: PipelineContext) => Promise<T | void>
-}
-
-export interface RunReport {
-  ok: boolean
-  results: Record<string, unknown>
-  errors: Record<string, string>
-  completed: string[]
-}
+// 兼容既有导入路径：类型定义已下沉到 core，这里统一再导出。
+export type {
+  PipelineContext,
+  PipelineStep,
+  RunReport,
+  StepRunStatus,
+  StepStatusInfo,
+} from '../../core/pipeline/types'
 
 export interface PipelineRunnerOptions {
   input?: unknown

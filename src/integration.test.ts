@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { buildAppPlugins, applySavedProviderConfig } from './plugins/register'
 import { PluginRegistry } from './core/plugin/registry'
+import { collectPipelineStepDefs } from './core/plugin/pipeline'
 import { usePluginStore } from './stores/pluginStore'
 import { saveProviderConfig } from './features/settings/httpBackendConfig'
 import AppShell from './components/layout/AppShell.vue'
@@ -20,6 +21,19 @@ describe('plugin integration', () => {
     expect(r.resolveProvider('llm').length).toBeGreaterThan(0)
     expect(r.resolveProvider('storage').length).toBeGreaterThan(0)
     expect(r.resolveProvider('tts')).toHaveLength(0)
+  })
+
+  it('registers all built-in pipeline step plugins in order', () => {
+    const r = buildAppPlugins()
+    expect(collectPipelineStepDefs(r).map((d) => d.kind)).toEqual([
+      'script',
+      'cut',
+      'scene-art',
+      'portrait',
+      'render',
+      'voice',
+      'assemble',
+    ])
   })
 
   it('registers all eight built-in feature modules in order', () => {

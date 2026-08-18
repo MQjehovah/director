@@ -7,35 +7,15 @@ import '@vue-flow/core/dist/theme-default.css'
 import { Button, Input } from '../../components/ui'
 import PipelineCanvasNode from './PipelineCanvasNode.vue'
 import type { PipelineNodeData } from './PipelineCanvasNode.vue'
-import {
-  assembleStep,
-  cutStep,
-  portraitStep,
-  presetPipeline,
-  renderStep,
-  sceneArtStep,
-  scriptStep,
-  voiceStep,
-} from './presetSteps'
 import { PipelineRunner } from './PipelineRunner'
 import type { PipelineStep, RunReport, StepStatusInfo } from './PipelineRunner'
 import type { NodeComponent } from '@vue-flow/core'
+import type { PipelineStepDef } from '../../core/plugin/types'
+import { usePluginStore } from '../../stores/pluginStore'
 
-interface StepDef {
-  kind: string
-  label: string
-  factory: () => PipelineStep
-}
-
-const STEP_DEFS: StepDef[] = [
-  { kind: 'script', label: '生成剧本', factory: scriptStep },
-  { kind: 'cut', label: '切分镜头', factory: cutStep },
-  { kind: 'scene-art', label: '生成场景图', factory: sceneArtStep },
-  { kind: 'portrait', label: '生成立绘', factory: portraitStep },
-  { kind: 'render', label: '生成画面', factory: renderStep },
-  { kind: 'voice', label: '配音', factory: voiceStep },
-  { kind: 'assemble', label: '组装成片', factory: assembleStep },
-]
+const pluginStore = usePluginStore()
+/** 画布可用步骤来自已注册并启用的 PipelinePlugin，按 order 排序。 */
+const stepDefs = computed<PipelineStepDef[]>(() => pluginStore.pipelineStepDefs())
 
 const idea = ref('')
 const report = ref<RunReport | null>(null)
@@ -74,13 +54,15 @@ function makeNodeData(kind: string, label: string): PipelineNodeData {
 }
 
 function initGraph(): void {
-  const preset = presetPipeline()
-  const initial = preset.map((step, index) => ({
-    id: step.id,
-    type: 'pipeline',
-    position: { x: 260, y: index * 190 },
-    data: makeNodeData(step.id, step.title || step.id),
-  }))
+  const initial = stepDefs.value.map((def, index) => {
+    const step = def.factory()
+    return {
+      id: step.id,
+      type: 'pipeline',
+      position: { x: 260, y: index * 190 },
+      data: makeNodeData(def.kind, def.label),
+    }
+  })
   addNodes(initial)
   addEdges(
     initial.slice(0, -1).map((node, i) => ({
@@ -94,7 +76,7 @@ function initGraph(): void {
 onMounted(initGraph)
 
 function addStepNode(kind: string): void {
-  const def = STEP_DEFS.find((d) => d.kind === kind)
+  const def = stepDefs.value.find((d) => d.kind === kind)
   if (!def) return
   const id = `${kind}-${Date.now().toString(36)}`
   const count = getNodes.value.length
@@ -168,7 +150,7 @@ function orderedSteps(): PipelineStep[] {
     .map((n) => n.id)
   return [...order, ...isolated].map((id) => {
     const node = nodes.find((n) => n.id === id)!
-    const def = STEP_DEFS.find((d) => d.kind === node.data.kind)
+    const def = stepDefs.value.find((d) => d.kind === node.data.kind)
     const step = def?.factory() ?? {
       id,
       title: node.data.label,
@@ -273,7 +255,7 @@ const errorLines = computed(() => (report.value ? Object.entries(report.value.er
     <div class="flex flex-wrap items-center gap-2 rounded-lg border border-edge bg-raised p-2">
       <span class="text-xs text-ink-muted">添加节点：</span>
       <Button
-        v-for="def in STEP_DEFS"
+        v-for="def in stepDefs"
         :key="def.kind"
         size="sm"
         variant="ghost"
