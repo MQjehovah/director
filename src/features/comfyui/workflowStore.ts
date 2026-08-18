@@ -88,6 +88,13 @@ function detectNodes(graph: WorkflowGraph): {
       Object.keys(graph).find((id) => typeof graph[id].inputs.prompt === 'string')
   }
 
+  if (negativeNodeId === undefined) {
+    // 自定义/子图节点（如 MiniMax 系列）常用 negative_prompt 文本输入
+    negativeNodeId = Object.keys(graph).find(
+      (id) => typeof graph[id].inputs.negative_prompt === 'string',
+    )
+  }
+
   return { promptNodeId, negativeNodeId, seedNodeId }
 }
 

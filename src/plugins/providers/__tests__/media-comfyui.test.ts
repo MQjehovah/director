@@ -215,6 +215,39 @@ describe('media-comfyui provider', () => {
     expect(JSON.stringify(graph)).not.toContain('{prompt}')
   })
 
+  it('injects negative prompt into a custom node negative_prompt field', async () => {
+    saveWorkflowTemplate({
+      id: 'tpl-custom-neg',
+      name: '自定义负向模板',
+      graphJson: JSON.stringify({
+        '105': {
+          class_type: '4c314f31-ecda-4b08-ae98-faaba1bf613f',
+          inputs: { prompt: '{prompt}', negative_prompt: '{negative_prompt}', noise_seed: 768 },
+        },
+      }),
+      promptNodeId: '105',
+      negativeNodeId: '105',
+      seedNodeId: '105',
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      workflowTemplateId: 'tpl-custom-neg',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pneg' }))
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      String(url).endsWith('/prompt') ? promptCall(url, init) : jsonResponse({}),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    await p.generateImage({ prompt: '黄昏天台', negativePrompt: '低分辨率，画面模糊', seed: 42 })
+    const body = JSON.parse((promptCall.mock.calls[0][1] as RequestInit).body as string)
+    const graph = body.prompt as Record<string, { inputs: Record<string, unknown> }>
+    expect(graph['105'].inputs.prompt).toBe('黄昏天台')
+    expect(graph['105'].inputs.negative_prompt).toBe('低分辨率，画面模糊')
+    expect(graph['105'].inputs.noise_seed).toBe(42)
+    expect(JSON.stringify(graph)).not.toContain('{negative_prompt}')
+  })
+
   it('throws a clear error when the template has no prompt node and no placeholders', async () => {
     saveWorkflowTemplate({
       id: 'tpl2',

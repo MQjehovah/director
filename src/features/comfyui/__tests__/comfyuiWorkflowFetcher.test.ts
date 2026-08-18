@@ -95,10 +95,39 @@ describe('comfyuiWorkflowFetcher', () => {
           return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as unknown as Response)
         }
         if (u.includes('/userdata?dir=workflows')) {
-          return Promise.resolve(jsonResponse(['workflows/a.json']))
+          // 该接口返回相对 workflows 目录的路径
+          return Promise.resolve(jsonResponse(['a.json']))
         }
-        if (u.endsWith('/userdata/workflows/a.json')) {
+        if (u.includes('/userdata/workflows%2Fa.json')) {
           return Promise.resolve(jsonResponse(JSON.stringify({ nodes: [1] })))
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const list = await listComfyUIWorkflows('http://127.0.0.1:8188')
+    expect(list.items[0].ref).toBe('workflows/a.json')
+    const content = await fetchComfyUIWorkflowContent('http://127.0.0.1:8188', list.items[0])
+    expect(content.ok).toBe(true)
+    expect(content.workflowJson).toEqual({ nodes: [1] })
+  })
+
+  it('uses workflow content embedded in the legacy /userdata list response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        const u = String(url)
+        if (u.includes('/api/workflows?')) {
+          return Promise.resolve({ ok: false, status: 404, json: async () => ({}) } as unknown as Response)
+        }
+        if (u.includes('/userdata?dir=workflows')) {
+          return Promise.resolve(
+            jsonResponse({
+              'workflows/old.json': {
+                modified: 1700000000,
+                content: JSON.stringify({ nodes: [9] }),
+              },
+            }),
+          )
         }
         return Promise.resolve(jsonResponse({}))
       }),
@@ -106,6 +135,6 @@ describe('comfyuiWorkflowFetcher', () => {
     const list = await listComfyUIWorkflows('http://127.0.0.1:8188')
     const content = await fetchComfyUIWorkflowContent('http://127.0.0.1:8188', list.items[0])
     expect(content.ok).toBe(true)
-    expect(content.workflowJson).toEqual({ nodes: [1] })
+    expect(content.workflowJson).toEqual({ nodes: [9] })
   })
 })

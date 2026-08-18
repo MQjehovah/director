@@ -485,7 +485,13 @@ function injectIntoNodes(
   }
 
   if (ids.negativeNodeId && graph[ids.negativeNodeId]) {
-    graph[ids.negativeNodeId].inputs.text = negativePrompt ?? ''
+    const node = graph[ids.negativeNodeId]
+    // 自定义节点（如 MiniMax 系列）用 negative_prompt 字段，CLIPTextEncode 用 text 字段
+    if (typeof node.inputs.negative_prompt === 'string') {
+      node.inputs.negative_prompt = negativePrompt ?? ''
+    } else {
+      node.inputs.text = negativePrompt ?? ''
+    }
   }
   if (ids.seedNodeId && graph[ids.seedNodeId]) {
     const node = graph[ids.seedNodeId]

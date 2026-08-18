@@ -88,6 +88,26 @@ describe('workflowStore', () => {
     expect(result.seedNodeId).toBe('105:15')
   })
 
+  it('detects negative_prompt inputs on custom/subgraph nodes', () => {
+    const result = importWorkflowGraph(
+      JSON.stringify({
+        '105': {
+          class_type: '4c314f31-ecda-4b08-ae98-faaba1bf613f',
+          inputs: {
+            prompt: '黄昏天台',
+            negative_prompt: '低分辨率，画面模糊',
+            noise_seed: 768,
+          },
+        },
+      }),
+      't',
+    )
+    if ('error' in result) throw new Error(result.error)
+    expect(result.promptNodeId).toBe('105')
+    expect(result.negativeNodeId).toBe('105')
+    expect(result.seedNodeId).toBe('105')
+  })
+
   it('returns an error for invalid JSON', () => {
     const result = importWorkflowGraph('{oops', 't')
     expect('error' in result).toBe(true)

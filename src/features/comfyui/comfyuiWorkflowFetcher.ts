@@ -6,6 +6,8 @@ export interface RemoteWorkflowItem {
   source: 'api' | 'file'
   ref: string
   updatedAt?: string
+  /** 旧版 ComfyUI 在 /userdata 列表响应中直接内嵌的文件内容（已解析） */
+  content?: unknown
 }
 
 export type WorkflowListMode = 'api' | 'userdata' | 'none'
@@ -35,6 +37,26 @@ function headersWithApiKey(apiKey?: string): HeadersInit {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * 规整为相对用户目录的 workflows 路径：
+ * /userdata?dir=workflows 返回的路径相对 workflows 目录（如 a.json），
+ * 读取时服务器按用户目录解析，需要补上 workflows/ 前缀。
+ */
+function normalizeWorkflowRef(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '')
+  if (normalized.startsWith('workflows/')) return normalized
+  return `workflows/${normalized}`
+}
+
+function parseEmbeddedContent(value: unknown): unknown {
+  if (typeof value !== 'string') return undefined
+  try {
+    return JSON.parse(value)
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -86,20 +108,22 @@ export async function listComfyUIWorkflows(
       if (Array.isArray(body)) {
         for (const entry of body) {
           if (typeof entry === 'string' && entry.toLowerCase().endsWith('.json')) {
+            const ref = normalizeWorkflowRef(entry)
             items.push({
-              id: entry,
+              id: ref,
               name: entry.split('/').pop()?.replace(/\.json$/i, '') ?? entry,
               source: 'file',
-              ref: entry,
+              ref,
             })
           } else if (isRecord(entry) && typeof entry.path === 'string') {
             const path = String(entry.path)
             if (path.toLowerCase().endsWith('.json')) {
+              const ref = normalizeWorkflowRef(path)
               items.push({
-                id: path,
+                id: ref,
                 name: path.split('/').pop()?.replace(/\.json$/i, '') ?? path,
                 source: 'file',
-                ref: path,
+                ref,
               })
             }
           }
@@ -108,14 +132,17 @@ export async function listComfyUIWorkflows(
         // 更旧版本：{ "workflows/name.json": { modified, content } }
         for (const [path, info] of Object.entries(body)) {
           if (!path.toLowerCase().endsWith('.json')) continue
+          const ref = normalizeWorkflowRef(path)
+          const embedded = isRecord(info) ? parseEmbeddedContent(info.content) : undefined
           items.push({
-            id: path,
+            id: ref,
             name: path.split('/').pop()?.replace(/\.json$/i, '') ?? path,
             source: 'file',
-            ref: path,
+            ref,
             updatedAt: isRecord(info) && typeof info.modified === 'number'
               ? new Date((info.modified as number) * 1000).toISOString()
               : undefined,
+            ...(embedded !== undefined ? { content: embedded } : {}),
           })
         }
       }
@@ -141,6 +168,10 @@ export async function fetchComfyUIWorkflowContent(
 ): Promise<WorkflowContentResult> {
   const url = cleanBaseUrl(baseUrl)
   try {
+    // 旧版 ComfyUI 列表响应已内嵌内容时直接使用，避免单文件接口 404
+    if (item.content !== undefined) {
+      return { ok: true, workflowJson: item.content }
+    }
     if (item.source === 'api') {
       const res = await fetch(`${url}/api/workflows/${encodeURIComponent(item.ref)}/content`, {
         headers: headersWithApiKey(apiKey),
@@ -155,13 +186,18 @@ export async function fetchComfyUIWorkflowContent(
       return { ok: true, workflowJson: body.workflow_json }
     }
 
-    const filePath = item.ref
-      .split('/')
-      .map((segment) => encodeURIComponent(segment))
-      .join('/')
-    const res = await fetch(`${url}/userdata/${filePath}`, {
+    const ref = item.ref.replace(/\\/g, '/').replace(/^\/+/, '')
+    // ComfyUI 的 /userdata/{file} 是单段路由：嵌套路径需整体编码（workflows%2Fname.json）
+    let res = await fetch(`${url}/userdata/${encodeURIComponent(ref)}`, {
       headers: headersWithApiKey(apiKey),
     })
+    // 兼容少数把 {file} 路由声明为多段的服务端
+    if (!res.ok && ref.includes('/')) {
+      const segments = ref.split('/').map((segment) => encodeURIComponent(segment)).join('/')
+      res = await fetch(`${url}/userdata/${segments}`, {
+        headers: headersWithApiKey(apiKey),
+      })
+    }
     if (!res.ok) {
       return { ok: false, error: `获取工作流文件失败（${res.status}）` }
     }
