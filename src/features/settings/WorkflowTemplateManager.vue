@@ -99,7 +99,7 @@ function importJsonText(
     }
     if (!parsedResult) return { result: apiResult, warnings: [] }
     const repaired = repairLegacyMisalignedGraph(parsedResult)
-    const result = importWorkflowObject(targetName, parsedResult)
+    const result = importWorkflowObject(targetName, parsedResult, undefined, objectInfo)
     if ('error' in result) return { error: result.error, warnings: [] }
     return { result, warnings: repaired ? [repairWarning] : [] }
   }
@@ -121,6 +121,7 @@ function importJsonText(
     targetName,
     converted.graph as ApiWorkflowGraph,
     detectParameterLabels(parsed),
+    objectInfo,
   )
   if ('error' in result) {
     return { error: result.error, warnings }
@@ -492,7 +493,9 @@ function saveParamEditor(): void {
           该模板未识别到可编辑参数。
         </p>
         <div
-          v-for="p in paramEditor.template.parameters ?? []"
+          v-for="p in (paramEditor.template.parameters ?? []).filter(
+            (x) => x.type !== 'image' && x.type !== 'video' && x.type !== 'audio',
+          )"
           :key="paramKey(p)"
           class="flex items-center justify-between gap-3 border-b border-edge py-2"
           data-test="param-row"

@@ -292,6 +292,28 @@ function replaceInputRef(
   }
 }
 
+/** 把参考输入按连接顺序写成 <Picture N>/<Video N> 标签说明，用户提示词与角色信息保留在后面 */
+function buildReferencePrompt(
+  userPrompt: string,
+  labels: Array<string | undefined> | undefined,
+  videoCount: number,
+  characterContext: string | undefined,
+): string {
+  const mentions: string[] = []
+  const labelList = labels ?? []
+  for (let i = 0; i < labelList.length; i += 1) {
+    const label = labelList[i]?.trim()
+    mentions.push(`<Picture ${i + 1}>${label ? `（${label}）` : ''}`)
+  }
+  for (let i = 0; i < videoCount; i += 1) {
+    mentions.push(`<Video ${i + 1}>（动作与运镜参考）`)
+  }
+  const lead = mentions.length > 0 ? `参考输入：${mentions.join('、')}。` : ''
+  const context = characterContext?.trim()
+  const body = [userPrompt.trim(), context].filter(Boolean).join('\n')
+  return [lead, body].filter(Boolean).join('\n')
+}
+
 /**
  * 动态注入工作流输入：
  * - 值占位符 {image}/{last_frame}/{duration}：替换为文件名/时长；
@@ -1168,6 +1190,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     inputImage?: { name: string; subfolder?: string; type?: string },
     duration?: number,
     lastFrame?: { name: string; subfolder?: string; type?: string },
+    overrides?: Record<string, unknown>,
   ): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
     if (templateId) {
       const template = getWorkflowTemplate(templateId)
@@ -1176,7 +1199,7 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     }
     const graph = assertFreshTemplate(template)
     const stripped = stripUiOnlyNodes(graph)
-    applyWorkflowOverrides(stripped, template.parameterOverrides, {
+    applyWorkflowOverrides(stripped, { ...template.parameterOverrides, ...overrides }, {
       prompt,
       negativePrompt,
       seed,
@@ -1288,7 +1311,76 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     return graph
   }
 
-  /** 把参考图上传到 ComfyUI /upload/image，返回服务器侧文件名，供 LoadImage 使用 */
+  /** 模板是否声明了参考输入参数（ref_images/ref_videos/ref_audios 输入名即绑定描述） */
+  function templateDeclaresReferenceInputs(templateId: string): boolean {
+    const template = getWorkflowTemplate(templateId)
+    if (!template) return false
+    try {
+      const graph = assertFreshTemplate(template)
+      const stripped = stripUiOnlyNodes(graph)
+      return Object.values(stripped).some((node) =>
+        Object.keys(node.inputs).some(
+          (k) =>
+            k.startsWith('ref_images.') ||
+            k.startsWith('ref_videos.') ||
+            k.startsWith('ref_audios.'),
+        ),
+      )
+    } catch {
+      return false
+    }
+  }
+
+  /** 把上传后的参考图/参考视频按模板声明的参数槽位（ref_images.ref_image_N 等）依次接线 */
+  function bindReferenceInputs(
+    graph: WorkflowGraph,
+    refImages: Array<{ name: string; subfolder?: string; type?: string }>,
+    refVideos: Array<{ name: string; subfolder?: string; type?: string }>,
+  ): void {
+    const refNodeIds = new Set<string>()
+    for (const [id, node] of Object.entries(graph)) {
+      if (
+        Object.keys(node.inputs).some(
+          (k) =>
+            k.startsWith('ref_images.') ||
+            k.startsWith('ref_videos.') ||
+            k.startsWith('ref_audios.'),
+        )
+      ) {
+        refNodeIds.add(id)
+      }
+    }
+    for (const refNodeId of refNodeIds) {
+      const node = graph[refNodeId]
+      let imageIndex = 0
+      for (const key of Object.keys(node.inputs)) {
+        const m = /^ref_images\.ref_image_(\d+)$/.exec(key)
+        if (!m) continue
+        const ref = refImages[imageIndex]
+        imageIndex += 1
+        if (!ref) continue
+        const loadId = uniqueNodeId(graph, `ai-director-ref-image-${m[1]}`)
+        graph[loadId] = { class_type: 'LoadImage', inputs: { image: ref.name } }
+        if (ref.subfolder) graph[loadId].inputs.subfolder = ref.subfolder
+        if (ref.type) graph[loadId].inputs.type = ref.type
+        node.inputs[key] = [loadId, 0]
+      }
+      let videoIndex = 0
+      for (const key of Object.keys(node.inputs)) {
+        const m = /^ref_videos\.ref_video_(\d+)$/.exec(key)
+        if (!m) continue
+        const ref = refVideos[videoIndex]
+        videoIndex += 1
+        if (!ref) continue
+        const loadId = uniqueNodeId(graph, `ai-director-ref-video-${m[1]}`)
+        graph[loadId] = { class_type: 'LoadVideo', inputs: { video: ref.name } }
+        if (ref.subfolder) graph[loadId].inputs.subfolder = ref.subfolder
+        if (ref.type) graph[loadId].inputs.type = ref.type
+        node.inputs[key] = [loadId, 0]
+      }
+    }
+  }
+
   async function uploadInputImage(inputUrl: string): Promise<{
     name: string
     subfolder?: string
@@ -1365,6 +1457,13 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     const imageAssetId = 'imageAssetId' in params ? params.imageAssetId : undefined
     const lastFrameAssetId = params.lastFrameAssetId
     const duration = params.duration ?? 5
+    const extraRefIds = 'referenceAssetIds' in params ? (params.referenceAssetIds ?? []) : []
+    const extraRefLabels = 'referenceLabels' in params ? (params.referenceLabels ?? []) : []
+    const refVideoIds = 'referenceVideoIds' in params ? (params.referenceVideoIds ?? []) : []
+    const characterContext =
+      'characterContext' in params ? params.characterContext : undefined
+    const templateOverrides =
+      'templateOverrides' in params ? params.templateOverrides : undefined
 
     const jobType =
       imageAssetId && lastFrameAssetId
@@ -1398,10 +1497,53 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
       uploadedLast = await uploadInputImage(lastUrl)
     }
 
+    // 参考输入绑定：模板若声明 ref_images/ref_videos 参数（输入名即绑定描述），
+    // 分镜收集的参考图/参考视频按序填入对应参数槽；无声明时保持原有单图/首帧行为。
+    const templateDeclaresRefs = templateId
+      ? templateDeclaresReferenceInputs(templateId)
+      : false
+    const refs: Array<{ name: string; subfolder?: string; type?: string; label?: string }> = []
+    const seen = new Set<string>()
+    if (templateDeclaresRefs && uploadedFirst) {
+      refs.push({ ...uploadedFirst, label: '首帧' })
+      if (imageAssetId) seen.add(imageAssetId)
+    }
+    if (templateDeclaresRefs) {
+      for (let i = 0; i < extraRefIds.length; i += 1) {
+        const id = extraRefIds[i]
+        if (seen.has(id)) continue
+        seen.add(id)
+        const url = await resolveAssetUrl(id)
+        if (!url) continue
+        const uploaded = await uploadInputImage(url)
+        refs.push({ ...uploaded, label: extraRefLabels[i] })
+        if (refs.length >= 9) break
+      }
+    }
+    const refVideos: Array<{ name: string; subfolder?: string; type?: string }> = []
+    if (templateDeclaresRefs) {
+      for (const id of refVideoIds) {
+        const url = await resolveAssetUrl(id)
+        if (!url) continue
+        const uploaded = await uploadInputImage(url)
+        refVideos.push(uploaded)
+        if (refVideos.length >= 3) break
+      }
+    }
+    const hasRefs = templateDeclaresRefs && (refs.length > 0 || refVideos.length > 0)
+    const finalPrompt = hasRefs
+      ? buildReferencePrompt(
+          params.prompt ?? '',
+          refs.map((r) => r.label),
+          refVideos.length,
+          characterContext,
+        )
+      : params.prompt ?? ''
+
     if (!templateId) {
       // 未配置视频模板：全动态搭建 MiniMax H3 工作流（首帧/尾帧按需接线）
       const graph = buildMiniMaxH3Graph(
-        params.prompt ?? '',
+        finalPrompt,
         seed,
         duration,
         uploadedFirst,
@@ -1411,13 +1553,15 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
     }
     const graph = buildGraph(
       templateId,
-      params.prompt ?? '',
+      finalPrompt,
       undefined,
       seed,
       uploadedFirst,
       duration,
       uploadedLast,
+      templateOverrides,
     )
+    if (hasRefs) bindReferenceInputs(graph, refs, refVideos)
     return submitWorkflow(graph, jobType, params.shotRef, seed)
   }
 
@@ -1437,7 +1581,13 @@ export function createMediaComfyUIProvider(opts: MediaComfyUIOptions = {}): Medi
   return {
     id: MEDIA_COMFYUI_ID,
     name: 'ComfyUI 媒体',
-    capabilities: ['text2image', 'text2video', 'image2video', 'firstLastFrameVideo', 'editImage'],
+    capabilities: [
+      'text2image',
+      'text2video',
+      'image2video',
+      'firstLastFrameVideo',
+      'editImage',
+    ],
     generateImage,
     generateVideo,
     editImage,

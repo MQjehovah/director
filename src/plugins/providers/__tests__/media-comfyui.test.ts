@@ -1328,6 +1328,100 @@ describe('media-comfyui provider', () => {
     expect(g['105:104'].inputs.first_frame).toEqual(['ai-director-image', 0])
   })
 
+  it('binds shot reference images/videos into template-declared ref_images/ref_videos slots', async () => {
+    saveWorkflowTemplate({
+      id: 'i2v-ref-tpl',
+      name: '参考生视频模板',
+      graphJson: JSON.stringify({
+        ref: {
+          class_type: 'MiniMaxH3ReferenceToVideo',
+          inputs: {
+            prompt: '{prompt}',
+            width: 1344,
+            height: 768,
+            length: 124,
+            ref_image_size: 'match',
+            clip: ['cl', 0],
+            vae: ['v1', 0],
+            audio_vae: ['v2', 0],
+            'ref_images.ref_image_0': null,
+            'ref_images.ref_image_1': null,
+            'ref_images.ref_image_2': null,
+            'ref_videos.ref_video_0': null,
+          },
+        },
+        cl: {
+          class_type: 'CLIPLoader',
+          inputs: {
+            clip_name: 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors',
+            type: 'minimax',
+            device: 'default',
+          },
+        },
+        v1: {
+          class_type: 'VAELoader',
+          inputs: { vae_name: 'minimax_h3_video_vae_fp16.safetensors' },
+        },
+        v2: {
+          class_type: 'VAELoader',
+          inputs: { vae_name: 'minimax_h3_audio_vae_fp32.safetensors' },
+        },
+      }),
+    })
+    saveProviderConfig(MEDIA_COMFYUI_ID, {
+      baseUrl: 'http://127.0.0.1:8188',
+      imageVideoWorkflowTemplateId: 'i2v-ref-tpl',
+    })
+    const promptCall = vi.fn().mockResolvedValue(jsonResponse({ prompt_id: 'pr2v' }))
+    let uploadCount = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/upload/image')) {
+          uploadCount += 1
+          return Promise.resolve(jsonResponse({ name: `ref-${uploadCount}.png` }))
+        }
+        if (String(url).endsWith('/prompt')) return promptCall(url, init)
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          blob: async () => new Blob([new Uint8Array([1])], { type: 'image/png' }),
+        } as unknown as Response)
+      }),
+    )
+    const p = createMediaComfyUIProvider({ pollIntervalMs: 10 })
+    const job = await p.generateVideo({
+      imageAssetId: 'data:image/png;base64,AAAA',
+      referenceAssetIds: ['data:image/png;base64,BBBB', 'data:image/png;base64,CCCC'],
+      referenceLabels: ['参考图', '场景'],
+      referenceVideoIds: ['data:video/mp4;base64,DDDD'],
+      characterContext: '角色「银发剑士」：银发蓝瞳；标签：主角、剑士',
+      prompt: '角色从长凳上站起来',
+      duration: 5,
+    })
+    expect(job.type).toBe('image2video')
+    const g = JSON.parse(
+      (promptCall.mock.calls[0][1] as RequestInit).body as string,
+    ).prompt as Record<string, { class_type: string; inputs: Record<string, unknown> }>
+    // 首帧 + 2 张参考图按顺序接线
+    expect(g['ref'].inputs['ref_images.ref_image_0']).toEqual(['ai-director-ref-image-0', 0])
+    expect(g['ref'].inputs['ref_images.ref_image_1']).toEqual(['ai-director-ref-image-1', 0])
+    expect(g['ref'].inputs['ref_images.ref_image_2']).toEqual(['ai-director-ref-image-2', 0])
+    expect(g['ai-director-ref-image-0'].class_type).toBe('LoadImage')
+    expect(g['ai-director-ref-image-0'].inputs.image).toBe('ref-1.png')
+    // 参考视频接线
+    expect(g['ref'].inputs['ref_videos.ref_video_0']).toEqual(['ai-director-ref-video-0', 0])
+    expect(g['ai-director-ref-video-0'].class_type).toBe('LoadVideo')
+    // 提示词按连接顺序包含 <Picture N>/<Video N> 与角色信息
+    const finalPrompt = g['ref'].inputs.prompt as string
+    expect(finalPrompt).toContain('<Picture 1>')
+    expect(finalPrompt).toContain('<Picture 2>')
+    expect(finalPrompt).toContain('<Picture 3>')
+    expect(finalPrompt).toContain('<Video 1>')
+    expect(finalPrompt).toContain('银发剑士')
+    expect(finalPrompt).toContain('角色从长凳上站起来')
+  })
+
   it('text2video submits the video workflow template', async () => {
     saveWorkflowTemplate({
       id: 'vid-tpl',

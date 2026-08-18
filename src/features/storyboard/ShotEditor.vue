@@ -7,6 +7,10 @@ import { useCharacterStore } from '../../stores/characterStore'
 import { useShotActions } from './useShotActions'
 import { useAssetUrls } from '../shared/useAssetUrls'
 import { useAssetPreview } from '../shared/assetPreview'
+import { getWorkflowTemplate } from '../comfyui/workflowStore'
+import type { WorkflowParameter } from '../comfyui/workflowStore'
+import { loadProviderConfig } from '../settings/httpBackendConfig'
+import { MEDIA_COMFYUI_ID } from '../../plugins/providers/media-comfyui'
 import { Badge, Button, Input, Progress, Select, Textarea } from '../../components/ui'
 import type { SelectOption } from '../../components/ui'
 import { DEFAULT_SHOT_DURATION, MAX_SHOT_DURATION } from '../../core/models'
@@ -116,6 +120,126 @@ function setVideoMode(value: string): void {
       ? value
       : undefined
   setField({ videoMode: mode })
+}
+
+/** 渲染区块：模式选择 + 按模板参数绑定素材/标量 */
+const renderModeOptions: SelectOption[] = [
+  { value: 'auto', label: '自动（按参考图推断）' },
+  { value: 'text2video', label: '文生视频' },
+  { value: 'ref2v', label: '参考生视频（多参考）' },
+]
+
+const renderMode = computed<'auto' | 'text2video' | 'ref2v'>(
+  () => shot.value?.render?.mode ?? 'auto',
+)
+
+function setRenderMode(value: string): void {
+  if (!shot.value) return
+  const mode = value === 'text2video' || value === 'ref2v' ? value : undefined
+  setField({
+    render:
+      mode === undefined
+        ? undefined
+        : { mode, params: { ...(shot.value?.render?.params ?? {}) } },
+  })
+}
+
+function renderTemplateIdFor(mode: 'text2video' | 'ref2v'): string | undefined {
+  const cfg = loadProviderConfig(MEDIA_COMFYUI_ID)
+  const key = mode === 'ref2v' ? 'imageVideoWorkflowTemplateId' : 'textVideoWorkflowTemplateId'
+  const value = cfg?.[key]
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+const renderTemplateId = computed(() =>
+  renderMode.value === 'auto'
+    ? undefined
+    : renderTemplateIdFor(renderMode.value),
+)
+
+const renderTemplate = computed(() =>
+  renderTemplateId.value ? getWorkflowTemplate(renderTemplateId.value) : undefined,
+)
+
+const renderAssetParams = computed(
+  () =>
+    renderTemplate.value?.parameters?.filter(
+      (p) => p.type === 'image' || p.type === 'video' || p.type === 'audio',
+    ) ?? [],
+)
+
+const renderScalarParams = computed(
+  () =>
+    renderTemplate.value?.parameters?.filter(
+      (p) =>
+        p.type !== 'image' &&
+        p.type !== 'video' &&
+        p.type !== 'audio' &&
+        !/duration|length|时长/i.test(p.label) &&
+        p.input !== 'value',
+    ) ?? [],
+)
+
+const renderImageCandidates = computed<Array<{ id: string; label: string }>>(() => {
+  const out: Array<{ id: string; label: string }> = []
+  const seen = new Set<string>()
+  const push = (id: string | undefined, label: string): void => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    out.push({ id, label })
+  }
+  const s = shot.value
+  const meta = s?.metadata ?? {}
+  for (const c of characterStore.characters) {
+    for (const r of c.referenceImages) push(r, `角色「${c.name}」`)
+  }
+  const scene = scriptStore.scenes.find((x) => x.id === s?.sceneId)
+  push(scene?.sceneImage, '场景图')
+  for (const r of scene?.referenceImages ?? []) push(r, '场景参考图')
+  push(typeof meta.firstFrameAssetId === 'string' ? meta.firstFrameAssetId : undefined, '首帧')
+  push(typeof meta.lastFrameAssetId === 'string' ? meta.lastFrameAssetId : undefined, '尾帧')
+  push(
+    typeof meta.referenceImageAssetId === 'string' ? meta.referenceImageAssetId : undefined,
+    '镜头参考图',
+  )
+  for (const a of s?.mediaAssets ?? []) push(a, '本镜素材')
+  return out
+})
+
+const renderVideoCandidates = computed<Array<{ id: string; label: string }>>(() => {
+  const out: Array<{ id: string; label: string }> = []
+  const seen = new Set<string>()
+  for (const a of shot.value?.mediaAssets ?? []) {
+    if (seen.has(a)) continue
+    seen.add(a)
+    out.push({ id: a, label: '本镜视频素材' })
+  }
+  return out
+})
+
+function renderParamValue(key: string): unknown {
+  return shot.value?.render?.params?.[key]
+}
+
+function setRenderParam(key: string, value: string | number | boolean): void {
+  if (!shot.value) return
+  const current = shot.value.render
+  const params = { ...(current?.params ?? {}) }
+  if (value === '' || value === undefined || value === null) delete params[key]
+  else params[key] = value
+  setField({ render: { mode: current?.mode ?? 'ref2v', params } })
+}
+
+function renderParamOptions(p: WorkflowParameter): SelectOption[] {
+  const candidates =
+    p.type === 'video' ? renderVideoCandidates.value : renderImageCandidates.value
+  return [
+    { value: '', label: '默认 / 自动' },
+    ...candidates.map((c) => ({
+      value: c.id,
+      label: `${c.label}（${c.id.slice(-6)}）`,
+    })),
+  ]
 }
 
 function setPrompt(value: string): void {
@@ -367,6 +491,82 @@ async function onRemove(): Promise<void> {
             @update:model-value="setVideoMode"
           />
         </label>
+
+        <div
+          class="flex flex-col gap-2 rounded-md border border-edge bg-zinc-900/40 p-2"
+          data-test="render-section"
+        >
+          <label class="block text-xs font-medium text-ink-muted">
+            渲染
+            <Select
+              class="mt-1"
+              :model-value="renderMode"
+              :options="renderModeOptions"
+              data-test="render-mode"
+              @update:model-value="setRenderMode"
+            />
+          </label>
+          <p
+            v-if="renderMode === 'ref2v' && !renderTemplateId"
+            class="text-[10px] leading-relaxed text-amber-300/80"
+            data-test="render-no-template"
+          >
+            未配置参考生视频模板，请在「设置 → ComfyUI 媒体」中为"参考生视频模板"选择已保存的模板。
+          </p>
+          <div
+            v-if="renderMode === 'ref2v' && renderAssetParams.length > 0"
+            class="flex flex-col gap-2"
+            data-test="render-ref2v-fields"
+          >
+            <template v-for="p in renderAssetParams" :key="p.nodeId + ':' + p.input">
+              <label class="block text-[11px] text-ink-muted">
+                {{ p.label }}
+                <Select
+                  class="mt-0.5"
+                  :model-value="String(renderParamValue(p.nodeId + ':' + p.input) ?? '')"
+                  :options="renderParamOptions(p)"
+                  :data-test="'render-param-' + p.input"
+                  @update:model-value="setRenderParam(p.nodeId + ':' + p.input, $event)"
+                />
+              </label>
+            </template>
+          </div>
+          <div
+            v-if="renderMode === 'ref2v' && renderScalarParams.length > 0"
+            class="flex flex-col gap-2"
+            data-test="render-scalar-fields"
+          >
+            <template v-for="p in renderScalarParams" :key="p.nodeId + ':' + p.input">
+              <label class="block text-[11px] text-ink-muted">
+                {{ p.label }}
+                <Input
+                  v-if="p.type === 'number'"
+                  class="mt-0.5"
+                  type="number"
+                  :model-value="String(renderParamValue(p.nodeId + ':' + p.input) ?? p.value ?? '')"
+                  data-test="render-scalar-input"
+                  @update:model-value="
+                    setRenderParam(p.nodeId + ':' + p.input, Number($event))
+                  "
+                />
+                <Input
+                  v-else
+                  class="mt-0.5"
+                  :model-value="String(renderParamValue(p.nodeId + ':' + p.input) ?? p.value ?? '')"
+                  data-test="render-scalar-input"
+                  @update:model-value="setRenderParam(p.nodeId + ':' + p.input, $event)"
+                />
+              </label>
+            </template>
+          </div>
+          <p
+            v-if="renderMode === 'text2video'"
+            class="text-[10px] leading-relaxed text-ink-muted"
+            data-test="render-text2video-hint"
+          >
+            文生视频直接由提示词生成，无需参考素材。
+          </p>
+        </div>
 
         <div
           v-if="shot.videoMode === 'text2video'"

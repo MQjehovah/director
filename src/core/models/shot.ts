@@ -16,6 +16,15 @@ export const MoveSchema = z.enum(['static', 'pan', 'tilt', 'zoom-in', 'zoom-out'
 /** 视频镜头的生成方式：文生视频 / 参考生视频 / 首尾帧生视频；不设置时按可用参考图自动推断 */
 export const VideoModeSchema = z.enum(['text2video', 'image2video', 'firstLastFrameVideo'])
 
+/** 镜头渲染方式：文生视频 / 参考生视频（多参考）；不设置时按可用参考自动推断 */
+export const ShotRenderModeSchema = z.enum(['text2video', 'ref2v'])
+
+/** 渲染绑定：镜头把自身数据（参考图/视频/标量参数）按工作流参数键 `${nodeId}:${input}` 填入 */
+export const ShotRenderSchema = z.object({
+  mode: ShotRenderModeSchema,
+  params: z.record(z.unknown()).default({}),
+})
+
 export const CameraSchema = z.object({
   shotSize: ShotSizeSchema,
   angle: AngleSchema,
@@ -35,6 +44,8 @@ export const ShotSchema = z.object({
   seed: z.number().optional(),
   mediaAssets: z.array(z.string()).default([]),
   renderJobRef: z.string().optional(),
+  /** 渲染区块的绑定：模式与工作流参数覆盖；未设置时沿用自动推断 */
+  render: ShotRenderSchema.optional(),
   metadata: z.record(z.unknown()).default({}),
 })
 

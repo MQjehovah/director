@@ -21,6 +21,11 @@ export interface ImageToVideoParams {
   duration?: number
   /** 尾帧图片资产 id：与首帧（imageAssetId）一起做首尾帧文生视频 */
   lastFrameAssetId?: string
+  referenceAssetIds?: string[]
+  referenceLabels?: string[]
+  referenceVideoIds?: string[]
+  characterContext?: string
+  templateOverrides?: Record<string, unknown>
 }
 
 export interface TextToVideoParams {
@@ -30,6 +35,7 @@ export interface TextToVideoParams {
   duration?: number
   /** 尾帧图片资产 id：与首帧一起做首尾帧文生视频 */
   lastFrameAssetId?: string
+  templateOverrides?: Record<string, unknown>
 }
 
 export interface MediaProvider {

@@ -18,7 +18,8 @@ export interface WorkflowParameter {
   nodeId: string
   input: string
   label: string
-  type: 'string' | 'number' | 'boolean'
+  /** 字段类型来自 ComfyUI object_info：image/video/audio 为素材参数，其余为标量参数 */
+  type: 'string' | 'number' | 'boolean' | 'image' | 'video' | 'audio'
   value: string | number | boolean
 }
 
@@ -139,26 +140,138 @@ function detectNodes(graph: WorkflowGraph): {
  */
 const DYNAMIC_PARAM_KEYS = new Set(['prompt', 'text', 'negative_prompt', 'seed', 'noise_seed'])
 
+/** 从 object_info 单个输入定义中解析 ComfyUI 类型（自动增长容器取模板首输入） */
+function resolveComfyInputType(spec: unknown): string | undefined {
+  if (!Array.isArray(spec) || spec.length === 0) return undefined
+  const raw = spec[0]
+  if (typeof raw !== 'string') return undefined
+  if (raw.startsWith('COMFY_AUTOGROW')) {
+    const opts = spec[1] as
+      | { template?: { input?: { required?: Record<string, unknown> } } }
+      | undefined
+    const required = opts?.template?.input?.required
+    if (required) {
+      const first = Object.values(required)[0]
+      return resolveComfyInputType(first)
+    }
+    return undefined
+  }
+  return raw
+}
+
+/** 把 ComfyUI 类型映射为参数类型：IMAGE/VIDEO/AUDIO 为素材，INT/FLOAT 为数字，BOOLEAN 为开关 */
+function mapComfyTypeToParamType(comfyType: string): WorkflowParameter['type'] {
+  switch (comfyType) {
+    case 'IMAGE':
+      return 'image'
+    case 'VIDEO':
+      return 'video'
+    case 'AUDIO':
+      return 'audio'
+    case 'INT':
+    case 'FLOAT':
+      return 'number'
+    case 'BOOLEAN':
+      return 'boolean'
+    default:
+      return 'string'
+  }
+}
+
+/**
+ * 自动增长容器的素材类别：元素类型（IMAGE/AUDIO）确认它是素材槽；
+ * 容器名（工作流声明的参数名）决定类别——ref_videos 语义上是参考视频，元素仍是 IMAGE 帧。
+ */
+function assetKindForAutogrow(
+  containerName: string,
+  elemComfyType: string | undefined,
+): WorkflowParameter['type'] | undefined {
+  if (/videos?$/i.test(containerName) && elemComfyType === 'IMAGE') return 'video'
+  if (elemComfyType === 'AUDIO' || /audios?$/i.test(containerName)) return 'audio'
+  if (elemComfyType === 'IMAGE') return 'image'
+  return elemComfyType ? mapComfyTypeToParamType(elemComfyType) : undefined
+}
+
+type ObjectInfoLike = {
+  input?: { required?: Record<string, unknown>; optional?: Record<string, unknown> }
+  inputs?: { required?: Record<string, unknown>; optional?: Record<string, unknown> }
+}
+
+/** 节点每个输入在 object_info 中的类型（未识别时为 undefined） */
+function inputTypesFor(
+  classType: string,
+  objectInfo: Record<string, ObjectInfoLike> | undefined,
+): Map<string, WorkflowParameter['type']> {
+  const out = new Map<string, WorkflowParameter['type']>()
+  const def = objectInfo?.[classType]
+  if (!def) return out
+  const sections = [
+    def.input?.required,
+    def.input?.optional,
+    def.inputs?.required,
+    def.inputs?.optional,
+  ]
+  for (const section of sections) {
+    if (!section) continue
+    for (const [name, spec] of Object.entries(section)) {
+      // 自动增长容器（如 ref_images → ref_images.ref_image_0..8）按 prefix/max 展开
+      if (Array.isArray(spec) && typeof spec[0] === 'string' && spec[0].startsWith('COMFY_AUTOGROW')) {
+        const opts = spec[1] as
+          | {
+              prefix?: string
+              max?: number
+              template?: { input?: { required?: Record<string, unknown> } }
+            }
+          | undefined
+        const required = opts?.template?.input?.required
+        const elemSpec = required ? Object.values(required)[0] : undefined
+        const elemType = elemSpec ? resolveComfyInputType(elemSpec) : undefined
+        const mapped = assetKindForAutogrow(name, elemType)
+        if (!mapped) continue
+        const prefix = opts?.prefix ?? ''
+        const max = typeof opts?.max === 'number' ? opts.max : 9
+        for (let i = 0; i < max; i += 1) {
+          out.set(`${name}.${prefix}${i}`, mapped)
+        }
+        continue
+      }
+      const comfy = resolveComfyInputType(spec)
+      if (comfy) out.set(name, mapComfyTypeToParamType(comfy))
+    }
+  }
+  return out
+}
+
 function detectParameters(
   graph: WorkflowGraph,
   labels: Record<string, string> = {},
+  objectInfo?: Record<string, ObjectInfoLike>,
 ): WorkflowParameter[] {
   const out: WorkflowParameter[] = []
   for (const [nodeId, node] of Object.entries(graph)) {
+    const typeMap = inputTypesFor(node.class_type, objectInfo)
     for (const [input, value] of Object.entries(node.inputs)) {
       if (input === 'widgets_values' || DYNAMIC_PARAM_KEYS.has(input)) continue
+      const resolvedType = typeMap.get(input)
+      const label =
+        labels[`${nodeId}:${input}`] ??
+        `${node.class_type} 路 ${input}`
+      if (resolvedType === 'image' || resolvedType === 'video' || resolvedType === 'audio') {
+        out.push({ nodeId, input, label, type: resolvedType, value: '' })
+        continue
+      }
       const scalar =
         typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
       if (!scalar) continue
-      out.push({
-        nodeId,
-        input,
-        label:
-          labels[`${nodeId}:${input}`] ??
-          `${node.class_type} · ${input}`,
-        type: typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? 'number' : 'string',
-        value,
-      })
+      const type =
+        resolvedType === 'number' || resolvedType === 'boolean'
+          ? resolvedType
+          : typeof value === 'boolean'
+            ? 'boolean'
+            : typeof value === 'number'
+              ? 'number'
+              : 'string'
+      out.push({ nodeId, input, label, type, value })
     }
   }
   return out
@@ -218,6 +331,7 @@ export function importWorkflowObject(
   name: string,
   graph: WorkflowGraph,
   parameterLabels?: Record<string, string>,
+  objectInfo?: Record<string, ObjectInfoLike>,
 ): ImportWorkflowResult {
   const { promptNodeId, negativeNodeId, seedNodeId } = detectNodes(graph)
   return {
@@ -227,7 +341,7 @@ export function importWorkflowObject(
     promptNodeId,
     negativeNodeId,
     seedNodeId,
-    parameters: detectParameters(graph, parameterLabels),
+    parameters: detectParameters(graph, parameterLabels, objectInfo),
     createdAt: new Date().toISOString(),
   }
 }

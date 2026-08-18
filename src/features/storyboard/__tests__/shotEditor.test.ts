@@ -11,6 +11,9 @@ import { useCharacterStore } from '../../../stores/characterStore'
 import { useJobStore } from '../../../stores/jobStore'
 import { usePluginStore } from '../../../stores/pluginStore'
 import { useShotActions, buildShotPrompt } from '../useShotActions'
+import { importWorkflowObject, saveWorkflowTemplate } from '../../comfyui/workflowStore'
+import { saveProviderConfig } from '../../../features/settings/httpBackendConfig'
+import { MEDIA_COMFYUI_ID } from '../../../plugins/providers/media-comfyui'
 import { JobSchema } from '../../../core/models'
 import type { Asset } from '../../../core/models'
 import type { MediaCapability } from '../../../core'
@@ -201,6 +204,90 @@ describe('shot editor', () => {
     expect(store.shotById(shot.id)?.shotType).toBe('video')
     expect(store.shotById(shot.id)?.seed).toBe(42)
     expect(store.shotById(shot.id)?.negativePrompt).toBe('低质量')
+  })
+
+  it('渲染区块按模板参数显示字段并写入 shot.render', async () => {
+    const objectInfo = {
+      MiniMaxH3ReferenceToVideo: {
+        input: {
+          required: {
+            prompt: ['STRING', {}],
+            ref_image_size: ['COMBO', {}],
+          },
+          optional: {
+            ref_images: [
+              'COMFY_AUTOGROW_V3',
+              {
+                prefix: 'ref_image_',
+                max: 9,
+                template: { input: { required: { ref_image: ['IMAGE', {}] } } },
+              },
+            ],
+            ref_videos: [
+              'COMFY_AUTOGROW_V3',
+              {
+                prefix: 'ref_video_',
+                max: 3,
+                template: { input: { required: { ref_video: ['IMAGE', {}] } } },
+              },
+            ],
+          },
+        },
+      },
+    }
+    const tpl = importWorkflowObject(
+      '渲染模板',
+      {
+        ref: {
+          class_type: 'MiniMaxH3ReferenceToVideo',
+          inputs: {
+            prompt: 'x',
+            ref_image_size: 'match',
+            'ref_images.ref_image_0': null,
+            'ref_videos.ref_video_0': null,
+          },
+        },
+        cl: {
+          class_type: 'CLIPLoader',
+          inputs: {
+            clip_name: 'q.safetensors',
+            type: 'minimax',
+            device: 'default',
+          },
+        },
+        v1: {
+          class_type: 'VAELoader',
+          inputs: { vae_name: 'v.safetensors' },
+        },
+        v2: {
+          class_type: 'VAELoader',
+          inputs: { vae_name: 'a.safetensors' },
+        },
+      },
+      undefined,
+      objectInfo,
+    )
+    if ('error' in tpl) throw new Error(tpl.error)
+    saveWorkflowTemplate(tpl)
+    saveProviderConfig(MEDIA_COMFYUI_ID, { imageVideoWorkflowTemplateId: tpl.id })
+    const store = useStoryboardStore()
+    const characterStore = useCharacterStore()
+    const hero = characterStore.addCharacter({ name: '银发剑士' })
+    characterStore.updateCharacter(hero.id, { referenceImages: ['char-img-1'] })
+    const shot = store.addShot({ shotType: 'video' as const })
+    const w = mount(ShotEditor, { props: { shotId: shot.id } })
+
+    await w.get('[data-test="render-mode"]').setValue('ref2v')
+    await flushPromises()
+    expect(w.find('[data-test="render-ref2v-fields"]').exists()).toBe(true)
+    const imageSelect = w.get('[data-test="render-param-ref_images.ref_image_0"]')
+    await imageSelect.setValue('char-img-1')
+    await flushPromises()
+
+    expect(store.shotById(shot.id)?.render?.mode).toBe('ref2v')
+    expect(store.shotById(shot.id)?.render?.params).toMatchObject({
+      'ref:ref_images.ref_image_0': 'char-img-1',
+    })
   })
 
   it('clamps the shot duration to the 10s maximum', async () => {
@@ -532,6 +619,189 @@ describe('useShotActions', () => {
     expect(jobs.jobs[0].params?.lastFrameAssetId).toBe('last-asset')
     expect(store.shotById(shot.id)?.metadata.inputImageAssetId).toBe('first-asset')
     expect(store.shotById(shot.id)?.metadata.firstFrameAssetId).toBe('first-asset')
+  })
+
+  it('generateMedia gathers reference images and character context for ref2v', async () => {
+    const registry = new PluginRegistry()
+    const ctrl = createJobController({ pollIntervalMs: 5 })
+    let videoParams: Record<string, unknown> | undefined
+    registry.register({
+      id: 'media-cap',
+      name: 'media-cap',
+      kind: 'provider',
+      providerType: 'media',
+      enabled: true,
+      capabilities: ['image2video'],
+      instance: {
+        id: 'media-cap',
+        name: 'media-cap',
+        capabilities: ['image2video'],
+        async generateVideo(params: Record<string, unknown>) {
+          videoParams = params
+          const job = JobSchema.parse({
+            id: 'cap-job-1',
+            type: 'image2video',
+            status: 'running',
+            progress: 5,
+            pluginId: 'media-cap',
+          })
+          ctrl.setJob(job)
+          return job
+        },
+        getJob: ctrl.getJob,
+        onJobUpdate: ctrl.onJobUpdate,
+        cancelJob: ctrl.cancelJob,
+      },
+    })
+    usePluginStore().init(registry)
+    const storyboardStore = useStoryboardStore()
+    const scriptStore = useScriptStore()
+    const characterStore = useCharacterStore()
+    const scene = scriptStore.addScene({
+      title: 'S1',
+      beats: [
+        {
+          id: 'b1',
+          type: 'dialogue',
+          dialogue: { speaker: '银发剑士', text: '起来。' },
+        },
+      ],
+    })
+    const hero = characterStore.addCharacter({
+      name: '银发剑士',
+      appearance: '银发蓝瞳，一身旧军装',
+      tags: ['主角', '剑士'],
+    })
+    characterStore.updateCharacter(hero.id, {
+      referenceImages: ['char-ref-1', 'char-ref-2'],
+    })
+    const shot = storyboardStore.addShot({
+      shotType: 'video',
+      sceneId: scene.id,
+      prompt: '角色从长凳上站起来',
+    })
+    storyboardStore.updateShot(shot.id, {
+      metadata: {
+        referenceImageAssetId: 'explicit-ref',
+        firstFrameAssetId: 'first-frame',
+        sceneImageAssetId: 'scene-img',
+      },
+    })
+
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('image2video')
+    expect(videoParams?.referenceAssetIds).toEqual([
+      'explicit-ref',
+      'first-frame',
+      'scene-img',
+      'char-ref-1',
+    ])
+    expect(videoParams?.referenceLabels).toEqual([
+      '参考图',
+      '首帧',
+      '场景',
+      '角色「银发剑士」',
+    ])
+    expect(String(videoParams?.characterContext)).toContain('银发剑士')
+    expect(String(videoParams?.characterContext)).toContain('标签：主角、剑士')
+  })
+
+  it('generateMedia uses render binding for ref2v (explicit refs and scalar overrides)', async () => {
+    const registry = new PluginRegistry()
+    const ctrl = createJobController({ pollIntervalMs: 5 })
+    let videoParams: Record<string, unknown> | undefined
+    registry.register({
+      id: 'media-cap',
+      name: 'media-cap',
+      kind: 'provider',
+      providerType: 'media',
+      enabled: true,
+      capabilities: ['image2video'],
+      instance: {
+        id: 'media-cap',
+        name: 'media-cap',
+        capabilities: ['image2video'],
+        async generateVideo(params: Record<string, unknown>) {
+          videoParams = params
+          const job = JobSchema.parse({
+            id: 'cap-job-2',
+            type: 'image2video',
+            status: 'running',
+            progress: 5,
+            pluginId: 'media-cap',
+          })
+          ctrl.setJob(job)
+          return job
+        },
+        getJob: ctrl.getJob,
+        onJobUpdate: ctrl.onJobUpdate,
+        cancelJob: ctrl.cancelJob,
+      },
+    })
+    usePluginStore().init(registry)
+    const objectInfo = {
+      MiniMaxH3ReferenceToVideo: {
+        input: {
+          required: { prompt: ['STRING', {}] },
+          optional: {
+            ref_images: [
+              'COMFY_AUTOGROW_V3',
+              {
+                prefix: 'ref_image_',
+                max: 9,
+                template: { input: { required: { ref_image: ['IMAGE', {}] } } },
+              },
+            ],
+            ref_videos: [
+              'COMFY_AUTOGROW_V3',
+              {
+                prefix: 'ref_video_',
+                max: 3,
+                template: { input: { required: { ref_video: ['IMAGE', {}] } } },
+              },
+            ],
+          },
+        },
+      },
+    }
+    const tpl = importWorkflowObject(
+      '渲染绑定模板',
+      {
+        ref: {
+          class_type: 'MiniMaxH3ReferenceToVideo',
+          inputs: {
+            prompt: 'x',
+            'ref_images.ref_image_0': null,
+            'ref_images.ref_image_1': null,
+            'ref_videos.ref_video_0': null,
+          },
+        },
+      },
+      undefined,
+      objectInfo,
+    )
+    if ('error' in tpl) throw new Error(tpl.error)
+    saveWorkflowTemplate(tpl)
+    saveProviderConfig(MEDIA_COMFYUI_ID, { imageVideoWorkflowTemplateId: tpl.id })
+    const store = useStoryboardStore()
+    const shot = store.addShot({ shotType: 'video' as const, prompt: '角色站起来' })
+    store.updateShot(shot.id, {
+      render: {
+        mode: 'ref2v',
+        params: {
+          'ref:ref_images.ref_image_0': 'asset-1',
+          'ref:ref_images.ref_image_1': '',
+          'ref:ref_videos.ref_video_0': 'video-1',
+          'ref:unet_name': 'model-x',
+        },
+      },
+    })
+
+    const job = await useShotActions().generateMedia(shot.id)
+    expect(job?.type).toBe('image2video')
+    expect(videoParams?.referenceAssetIds).toEqual(['asset-1'])
+    expect(videoParams?.referenceVideoIds).toEqual(['video-1'])
+    expect(videoParams?.templateOverrides).toEqual({ 'ref:unet_name': 'model-x' })
   })
 
   it('routing: 首尾帧 shot prefers a provider declaring firstLastFrameVideo', async () => {

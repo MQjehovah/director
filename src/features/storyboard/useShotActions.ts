@@ -3,11 +3,16 @@ import { usePluginStore } from '../../stores/pluginStore'
 import { useStoryboardStore } from '../../stores/storyboardStore'
 import { useJobStore } from '../../stores/jobStore'
 import { useScriptStore } from '../../stores/scriptStore'
-import type { Asset, Job, Shot } from '../../core/models'
+import { useCharacterStore } from '../../stores/characterStore'
+import type { Asset, Character, Job, Scene, Shot } from '../../core/models'
 import type { MediaCapability } from '../../core/plugin/types'
 import { capabilityForJobType } from '../../providers/capabilities'
 import type { MediaCapabilityProvider } from '../../providers/capabilities'
 import type { ImageToVideoParams, MediaProvider } from '../../providers/MediaProvider'
+import { getWorkflowTemplate } from '../comfyui/workflowStore'
+import type { WorkflowParameter } from '../comfyui/workflowStore'
+import { loadProviderConfig } from '../settings/httpBackendConfig'
+import { MEDIA_COMFYUI_ID } from '../../plugins/providers/media-comfyui'
 import { persistGeneratedAssets } from '../shared/persistGeneratedAssets'
 import type { AssetResolver } from '../shared/persistGeneratedAssets'
 
@@ -72,6 +77,73 @@ function lastFrameInputFor(shot: Shot | undefined): string | undefined {
   return recordedLastFrame(shot)
 }
 
+/** 镜头所在场次 */
+function sceneForShot(shot: Shot | undefined): Scene | undefined {
+  if (!shot?.sceneId) return undefined
+  return useScriptStore().scenes.find((s) => s.id === shot.sceneId)
+}
+
+/** 镜头所在场次台词中出现过的角色（按说话人名称匹配） */
+function charactersForShot(shot: Shot | undefined): Character[] {
+  const scene = sceneForShot(shot)
+  const speakers = new Set<string>()
+  for (const beat of scene?.beats ?? []) {
+    const name = beat.dialogue?.speaker?.trim()
+    if (name) speakers.add(name)
+  }
+  if (speakers.size === 0) return []
+  return useCharacterStore().characters.filter((c) => speakers.has(c.name.trim()))
+}
+
+/** 收集参考生视频的输入：显式参考 → 首帧 → 场次场景图 → 场次参考图 → 角色参考图；去重，最多 9 张 */
+function referenceAssetsForShot(
+  shot: Shot | undefined,
+): { ids: string[]; labels: string[]; characterContext: string } {
+  const ids: string[] = []
+  const labels: string[] = []
+  const seen = new Set<string>()
+  const push = (id: string | undefined, label: string): void => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    ids.push(id)
+    labels.push(label)
+  }
+  const metadata = shot?.metadata ?? {}
+  push(typeof metadata.referenceImageAssetId === 'string' ? metadata.referenceImageAssetId : undefined, '参考图')
+  push(typeof metadata.firstFrameAssetId === 'string' ? metadata.firstFrameAssetId : undefined, '首帧')
+  push(typeof metadata.sceneImageAssetId === 'string' ? metadata.sceneImageAssetId : undefined, '场景')
+  const scene = sceneForShot(shot)
+  push(scene?.sceneImage, '场景')
+  for (const r of scene?.referenceImages ?? []) push(r, '场景参考图')
+  const characters = charactersForShot(shot)
+  for (const c of characters) {
+    if (ids.length >= 9) break
+    push(c.referenceImages[0], `角色「${c.name}」`)
+  }
+  const characterContext = characters
+    .map((c) => {
+      const parts = [
+        c.name,
+        c.bio,
+        c.appearance,
+        c.tags.length > 0 ? `标签：${c.tags.join('、')}` : '',
+      ]
+      return parts.filter(Boolean).join('；')
+    })
+    .join('\n')
+  return { ids: ids.slice(0, 9), labels: labels.slice(0, 9), characterContext }
+}
+
+/** 渲染绑定的参数类型：按模板参数描述（来自 object_info 字段类型）查找，key 为 `${nodeId}:${input}` */
+function renderParamType(
+  templateId: string | undefined,
+  key: string,
+): WorkflowParameter['type'] | undefined {
+  if (!templateId) return undefined
+  const tpl = getWorkflowTemplate(templateId)
+  return tpl?.parameters?.find((p) => `${p.nodeId}:${p.input}` === key)?.type
+}
+
 /**
  * 按镜头需求选择能力：
  * - image → text2image（文生图）
@@ -80,6 +152,9 @@ function lastFrameInputFor(shot: Shot | undefined): string | undefined {
  */
 function capabilityForShot(shot: Shot | undefined): MediaCapability {
   if (!shot || shot.shotType !== 'video') return 'text2image'
+  // 渲染区块显式选择参考生视频：走 image2video 模板（多参考绑定）
+  if (shot.render?.mode === 'ref2v') return 'image2video'
+  if (shot.render?.mode === 'text2video') return 'text2video'
   const first = imageInputFor(shot)
   const last = lastFrameInputFor(shot)
   switch (shot.videoMode) {
@@ -192,6 +267,47 @@ export function useShotActions() {
         if (capability !== 'text2video') {
           if (imageAssetId) videoParams.imageAssetId = imageAssetId
           if (lastFrameAssetId) videoParams.lastFrameAssetId = lastFrameAssetId
+          const renderCfg = loadProviderConfig(MEDIA_COMFYUI_ID)
+          const renderTemplateId =
+            shot.render?.mode === 'ref2v' &&
+            typeof renderCfg?.imageVideoWorkflowTemplateId === 'string'
+              ? renderCfg.imageVideoWorkflowTemplateId
+              : undefined
+          const explicitRefIds: string[] = []
+          const explicitRefVideoIds: string[] = []
+          const scalarOverrides: Record<string, unknown> = {}
+          for (const [key, value] of Object.entries(shot.render?.params ?? {})) {
+            if (value === undefined || value === null || value === '') continue
+            const type = renderParamType(renderTemplateId, key)
+            if (type === 'image') {
+              if (typeof value === 'string') explicitRefIds.push(value)
+            } else if (type === 'video') {
+              if (typeof value === 'string') explicitRefVideoIds.push(value)
+            } else {
+              scalarOverrides[key] = value
+            }
+          }
+          const auto = referenceAssetsForShot(shot)
+          const refs =
+            explicitRefIds.length > 0
+              ? {
+                  ids: explicitRefIds,
+                  labels: explicitRefIds.map((_, i) => `参考图 ${i + 1}`),
+                }
+              : { ids: auto.ids, labels: auto.labels }
+          if (refs.ids.length > 0) {
+            videoParams.referenceAssetIds = refs.ids
+            videoParams.referenceLabels = refs.labels
+          }
+          if (auto.characterContext.trim()) {
+            videoParams.characterContext = auto.characterContext
+          }
+          if (explicitRefVideoIds.length > 0) {
+            videoParams.referenceVideoIds = explicitRefVideoIds
+          }
+          if (Object.keys(scalarOverrides).length > 0) {
+            videoParams.templateOverrides = scalarOverrides
+          }
         }
         providerJob = await media.generateVideo(videoParams)
         // 记录 image2video 的首帧输入图，供二次生成路由与引用

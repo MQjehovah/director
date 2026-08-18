@@ -3,6 +3,7 @@ import {
   deleteWorkflowTemplate,
   getWorkflowTemplate,
   importWorkflowGraph,
+  importWorkflowObject,
   listWorkflowTemplates,
   saveWorkflowTemplate,
 } from '../workflowStore'
@@ -70,6 +71,75 @@ describe('workflowStore', () => {
     expect(params.some((p) => p.nodeId === '227:212' && p.input === 'type')).toBe(true)
     // prompt 是每次生成动态注入的键，不作为可编辑参数
     expect(params.some((p) => p.input === 'prompt')).toBe(false)
+  })
+
+  it('describes parameter types from ComfyUI object_info (asset and scalar)', () => {
+    const objectInfo = {
+      MiniMaxH3ReferenceToVideo: {
+        input: {
+          required: {
+            prompt: ['STRING', { multiline: true }],
+            width: ['INT', {}],
+            ref_image_size: ['COMBO', {}],
+          },
+          optional: {
+            ref_images: [
+              'COMFY_AUTOGROW_V3',
+              {
+                prefix: 'ref_image_',
+                max: 9,
+                template: { input: { required: { ref_image: ['IMAGE', {}] } } },
+              },
+            ],
+            ref_videos: [
+              'COMFY_AUTOGROW_V3',
+              {
+                prefix: 'ref_video_',
+                max: 3,
+                template: { input: { required: { ref_video: ['IMAGE', {}] } } },
+              },
+            ],
+            ref_audios: [
+              'COMFY_AUTOGROW_V3',
+              {
+                prefix: 'ref_audio_',
+                max: 3,
+                template: { input: { required: { ref_audio: ['AUDIO', {}] } } },
+              },
+            ],
+          },
+        },
+      },
+    }
+    const result = importWorkflowObject(
+      'ref模板',
+      {
+        '227:215': {
+          class_type: 'MiniMaxH3ReferenceToVideo',
+          inputs: {
+            prompt: 'x',
+            width: 1344,
+            ref_image_size: 'match',
+            'ref_images.ref_image_0': null,
+            'ref_images.ref_image_1': null,
+            'ref_videos.ref_video_0': null,
+            'ref_audios.ref_audio_0': null,
+          },
+        },
+      },
+      undefined,
+      objectInfo,
+    )
+    if ('error' in result) throw new Error(result.error)
+    const params = result.parameters ?? []
+    // 素材参数类型来自 object_info（IMAGE/AUDIO），而不是输入名字符串
+    expect(params.find((p) => p.input === 'ref_images.ref_image_0')?.type).toBe('image')
+    expect(params.find((p) => p.input === 'ref_images.ref_image_1')?.type).toBe('image')
+    expect(params.find((p) => p.input === 'ref_videos.ref_video_0')?.type).toBe('video')
+    expect(params.find((p) => p.input === 'ref_audios.ref_audio_0')?.type).toBe('audio')
+    // 标量类型同样来自 object_info
+    expect(params.find((p) => p.input === 'width')?.type).toBe('number')
+    expect(params.find((p) => p.input === 'ref_image_size')?.type).toBe('string')
   })
 
   it('falls back to the first CLIPTextEncode when no KSampler link exists', () => {
